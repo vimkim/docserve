@@ -9,7 +9,9 @@ Dotfiles owns bootstrap and daily-update integration, forwarding launchers at
 symlink from `~/.config/my-scripts/share/serve-html` to this package's assets.
 The Markdown skill validator still uses that asset path. On migration, matching
 legacy assets are backed up to `~/.local/state/html-serve/legacy-assets` before
-chezmoi applies the symlink. Modified legacy assets remain in place and are
+chezmoi applies the symlink. Direct bootstrap invocation clears only the old
+directory's state record after verifying and backing up its contents. This
+preparation runs outside a parent chezmoi apply, which holds the state lock. Modified legacy assets remain in place and are
 reported for review. The new server always uses its packaged assets.
 
 Local setup does not create or publish a GitHub repository. Until separately

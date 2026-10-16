@@ -51,9 +51,9 @@ index pages. The inherited Python implementation showed a case-insensitive
 filename list without dates. Override that method, keeping the existing
 directory routing and HTTP lifecycle.
 
-The original [viewer HTML](../private_dot_config/my-scripts/share/serve-html/viewer.html),
-[CSS](../private_dot_config/my-scripts/share/serve-html/viewer.css), and
-[JavaScript](../private_dot_config/my-scripts/share/serve-html/viewer.js) each
+The original [viewer HTML](../src/html_serve/assets/viewer.html),
+[CSS](../src/html_serve/assets/viewer.css), and
+[JavaScript](../src/html_serve/assets/viewer.js) each
 contribute to automatic dark mode: the page declares both color schemes, CSS
 uses operating-system media queries, and Mermaid independently calls
 `matchMedia()`. The bundled GitHub Markdown CSS also contains those media

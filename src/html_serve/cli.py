@@ -140,17 +140,36 @@ def directory_entries(path, diagnostic=None):
     return entries
 
 
-def render_directory(entries, request_path, sort_mode, *, has_parent=False):
+def render_directory(entries, request_path, sort_mode, *, sort_order=None, has_parent=False):
     """Return a complete listing without depending on browser JavaScript."""
     def name_key(entry):
         return entry.name.casefold(), entry.name
 
+    defaults = {"title": "asc", "created": "desc", "modified": "desc"}
+    sort_order = sort_order or defaults[sort_mode]
+    entries = sorted(entries, key=name_key)
     if sort_mode == "title":
-        entries = sorted(entries, key=name_key)
+        if sort_order == "desc":
+            entries.reverse()
     else:
-        entries = sorted(entries, key=lambda entry: (
-            entry.modified_ns is None, -(entry.modified_ns or 0), *name_key(entry),
-        ))
+        field = "created" if sort_mode == "created" else "modified_ns"
+        known = [entry for entry in entries if getattr(entry, field) is not None]
+        unknown = [entry for entry in entries if getattr(entry, field) is None]
+        # Stable sorting keeps equal dates alphabetical; unavailable dates stay last.
+        entries = sorted(known, key=lambda entry: getattr(entry, field),
+                         reverse=sort_order == "desc") + unknown
+
+    def sort_query(column, order):
+        return "?sort=" + column + ("&order=" + order if order != defaults[column] else "")
+
+    def column_header(column, label):
+        active = column == sort_mode
+        order = ("desc" if sort_order == "asc" else "asc") if active else defaults[column]
+        direction = "ascending" if order == "asc" else "descending"
+        current = (' aria-sort="ascending"' if sort_order == "asc" else ' aria-sort="descending"') if active else ""
+        href = escape(sort_query(column, order), quote=True)
+        return (f'<th scope="col"{current}><a href="{href}" aria-label="{label}" '
+                f'title="Sort by {label}, {direction}">{label}</a></th>')
 
     def date_cell(value):
         if value is None:
@@ -163,10 +182,10 @@ def render_directory(entries, request_path, sort_mode, *, has_parent=False):
             return "Unavailable"
 
     title = "Directory listing for " + unquote(request_path, errors="replace")
-    query = "?sort=" + sort_mode
+    query = sort_query(sort_mode, sort_order)
     rows = []
     if has_parent:
-        rows.append(f'<tr><td><a href="../{query}">../</a></td><td>—</td><td>—</td></tr>')
+        rows.append(f'<tr><td><a href="../{escape(query, quote=True)}">../</a></td><td>—</td><td>—</td></tr>')
     for entry in entries:
         label = entry.name + ("@" if entry.is_symlink else "/" if entry.is_directory else "")
         href = quote(entry.name, safe="", errors="surrogatepass")
@@ -180,10 +199,8 @@ def render_directory(entries, request_path, sort_mode, *, has_parent=False):
                 pass
         rows.append(f'<tr><td><a href="{escape(href, quote=True)}">{escape(label, quote=False)}</a></td>'
                     f'<td>{date_cell(entry.created)}</td><td>{date_cell(modified)}</td></tr>')
-    active_title = ' aria-current="true"' if sort_mode == "title" else ""
-    active_modified = ' aria-current="true"' if sort_mode == "modified" else ""
-    title_sort = ' aria-sort="ascending"' if sort_mode == "title" else ""
-    modified_sort = ' aria-sort="descending"' if sort_mode == "modified" else ""
+    headers = "".join(column_header(column, label) for column, label in
+                      (("title", "Title"), ("created", "Created"), ("modified", "Modified")))
     html = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -194,21 +211,23 @@ body {{ max-width: 1120px; margin: auto; padding: 24px; color: #1f2328; backgrou
 h1 {{ font-size: 1.5rem; overflow-wrap: anywhere; }}
 a {{ color: #0969da; }}
 a:focus-visible {{ outline: 2px solid #0969da; outline-offset: 3px; }}
-nav {{ display: flex; flex-wrap: wrap; gap: 16px; }}
-[aria-current] {{ font-weight: 700; }}
 p {{ color: #59636e; }}
 .table-scroll {{ overflow-x: auto; }}
 table {{ border-collapse: collapse; width: 100%; }}
 th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #d1d9e0; }}
+th {{ padding: 0; }}
+th a {{ display: block; padding: 12px; white-space: nowrap; text-decoration: none; }}
+th a:hover {{ text-decoration: underline; }}
+th[aria-sort="ascending"] a::after {{ content: " ↑"; }}
+th[aria-sort="descending"] a::after {{ content: " ↓"; }}
 td:first-child {{ min-width: 160px; overflow-wrap: anywhere; }}
 td:not(:first-child) {{ white-space: nowrap; font-variant-numeric: tabular-nums; }}
 @media (max-width: 767px) {{ body {{ padding: 16px; }} }}
 </style></head><body><h1>{escape(title)}</h1>
-<nav aria-label="Sort files"><a href="?sort=modified"{active_modified}>Modified · newest first</a>
-<a href="?sort=title"{active_title}>Title · A–Z</a></nav>
-<p>Times: server local. Creation dates are unavailable when the filesystem does not provide them.</p>
+<p>Select a column to sort; select it again to reverse. Times: server local.
+Creation dates are unavailable when the filesystem does not provide them.</p>
 <div class="table-scroll" role="region" aria-label="Files" tabindex="0"><table>
-<thead><tr><th scope="col"{title_sort}>Title</th><th scope="col">Created</th><th scope="col"{modified_sort}>Modified</th></tr></thead>
+<thead><tr>{headers}</tr></thead>
 <tbody>{''.join(rows)}</tbody></table></div></body></html>'''
     return html.encode("utf-8", errors="replace")
 
@@ -233,8 +252,10 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
             return None
         request = urlsplit(self.path)
         values = parse_qs(request.query, keep_blank_values=True).get("sort")
-        sort_mode = values[0] if values in (["title"], ["modified"]) else "modified"
-        encoded = render_directory(entries, request.path, sort_mode,
+        sort_mode = values[0] if values in (["title"], ["created"], ["modified"]) else "modified"
+        orders = parse_qs(request.query, keep_blank_values=True).get("order")
+        sort_order = orders[0] if orders in (["asc"], ["desc"]) else None
+        encoded = render_directory(entries, request.path, sort_mode, sort_order=sort_order,
                                    has_parent=os.path.abspath(path) != os.path.abspath(self.directory))
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")

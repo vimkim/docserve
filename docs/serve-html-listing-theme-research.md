@@ -21,11 +21,11 @@ metadata layer. The standard handler's GET/HEAD flow and URL translation can
 continue to own the HTTP lifecycle. Python documents the handler and its
 directory listing extension point in its [3.14 HTTP server reference](https://docs.python.org/3.14/library/http.server.html#http.server.SimpleHTTPRequestHandler).
 
-The [viewer HTML](../private_dot_config/my-scripts/share/serve-html/viewer.html)
+The [viewer HTML](../src/html_serve/assets/viewer.html)
 declares `color-scheme: light dark`. Both
-[viewer CSS](../private_dot_config/my-scripts/share/serve-html/viewer.css) and the
+[viewer CSS](../src/html_serve/assets/viewer.css) and the
 bundled GitHub Markdown CSS use `prefers-color-scheme`. The
-[viewer script](../private_dot_config/my-scripts/share/serve-html/viewer.js)
+[viewer script](../src/html_serve/assets/viewer.js)
 also reads that media query to initialize Mermaid. The current behavior is
 therefore automatic selection from the browser preference; dark is not a fixed
 application default. The user's requested default should supersede all three

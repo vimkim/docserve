@@ -61,7 +61,8 @@ before(async () => {
   }
   await utimes(path.join(directory, "ordering/subdir"), 1600000000, 1600000000);
 
-  server = spawn("python3", ["-B", path.join(root, "src/html_serve/cli.py"),
+  server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
+    process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
     "--directory", directory, "--bind", "127.0.0.1"], { stdio: ["ignore", "pipe", "pipe"] });
   server.stdout.on("data", (data) => { serverOutput += data; });
   server.stderr.on("data", (data) => { serverOutput += data; });
@@ -138,12 +139,44 @@ test("directory sorting and navigation work without JavaScript on a narrow scree
     await page.goto(baseURL + "ordering/");
     assert.deepEqual(await page.locator("th").allTextContents(), ["Title", "Created", "Modified"]);
     assert.deepEqual(await labels(), ["../", "zebra.md", "report2.md", "report10.md", "Alpha.md", "subdir/"]);
-    await page.getByRole("link", { name: "Title · A–Z", exact: true }).click();
+    assert.equal(await page.getByRole("navigation", { name: "Sort files" }).count(), 0);
+    await page.getByRole("link", { name: "Title", exact: true }).click();
     assert.deepEqual(await labels(), ["../", "Alpha.md", "report10.md", "report2.md", "subdir/", "zebra.md"]);
+    await page.getByRole("link", { name: "Title", exact: true }).click();
+    assert.deepEqual(await labels(), ["../", "zebra.md", "subdir/", "report2.md", "report10.md", "Alpha.md"]);
+    assert.equal(await page.locator('th[aria-sort="descending"]').innerText(), "Title");
     await page.getByRole("link", { name: "subdir/", exact: true }).click();
     assert.equal(new URL(page.url()).searchParams.get("sort"), "title");
+    assert.equal(new URL(page.url()).searchParams.get("order"), "desc");
     await page.getByRole("link", { name: "../", exact: true }).click();
     assert.equal(new URL(page.url()).searchParams.get("sort"), "title");
+    assert.equal(new URL(page.url()).searchParams.get("order"), "desc");
+    await page.getByRole("link", { name: "Modified", exact: true }).click();
+    assert.deepEqual(await labels(), ["../", "zebra.md", "report2.md", "report10.md", "Alpha.md", "subdir/"]);
+    // Header links remain keyboard operable with JavaScript disabled.
+    await page.getByRole("link", { name: "Modified", exact: true }).focus();
+    await Promise.all([
+      page.waitForURL((url) => url.searchParams.get("order") === "asc"),
+      page.keyboard.press("Enter"),
+    ]);
+    assert.deepEqual(await labels(), ["../", "subdir/", "Alpha.md", "report10.md", "report2.md", "zebra.md"]);
+    const dates = await page.locator("tbody tr").evaluateAll((rows) => rows.slice(1).map((row) => ({
+      name: row.querySelector("a").textContent,
+      created: row.children[1].querySelector("time")?.dateTime || null,
+    })));
+    for (const order of ["desc", "asc"]) {
+      await page.getByRole("link", { name: "Created", exact: true }).click();
+      const expected = dates.toSorted((a, b) => {
+        if (a.created && b.created && a.created !== b.created) {
+          return (a.created < b.created ? -1 : 1) * (order === "asc" ? 1 : -1);
+        }
+        if (!a.created !== !b.created) return a.created ? -1 : 1;
+        return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1;
+      });
+      assert.deepEqual(await labels(), ["../", ...expected.map((entry) => entry.name)]);
+      assert.equal(await page.locator("th[aria-sort]").innerText(), "Created");
+      assert.equal(await page.locator("th[aria-sort]").getAttribute("aria-sort"), order === "asc" ? "ascending" : "descending");
+    }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   } finally { await page.close(); }
 });

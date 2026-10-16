@@ -18,19 +18,25 @@ the filename to open that page, or select it explicitly on the command line.
 
 ## Directory listing
 
-Listings show **Title**, **Created**, and **Modified** columns. The default
-order is newest modification first. Select **Title · A–Z** to sort by filename,
-including its extension. Names use Unicode case-insensitive character order,
-with case-sensitive ties; digits sort as characters (`report10` before
-`report2`). Files and directories share the order, with `../` first when
-inside the serving root.
+Listings show clickable **Title**, **Created**, and **Modified** column headers.
+Select a header to sort by that column; select it again to reverse direction.
+Title starts A–Z; either date starts newest first. An arrow marks the active
+column and direction. The initial order is Modified, newest first. There are
+no separate sorting buttons.
+
+Title sorts by filename, including its extension, using Unicode
+case-insensitive character order with case-sensitive ties. Digits sort as
+characters (`report10` before `report2`). Date ties sort alphabetically, and
+unavailable dates stay last in either direction. Files and directories share
+the order, with `../` always first when inside the serving root.
 
 Sorting works without JavaScript and is recorded in the directory URL:
-`?sort=title` selects alphabetical order and `?sort=modified` selects newest
-first. Parent and child directory links retain the selected order. A bare
-directory URL always starts newest first. File links retain their normal URLs;
-browser Back returns to the sorted listing, while the Markdown **Files** link
-opens its parent listing in default order.
+`?sort=title`, `?sort=created`, or `?sort=modified`. Add `&order=asc` or
+`&order=desc` to choose direction; a missing or invalid direction uses that
+column's initial direction. Parent and child directory links retain both
+settings. A bare directory URL starts newest modification first. File links
+retain their normal URLs; browser Back returns to the sorted listing, while
+the Markdown **Files** link opens its parent listing in default order.
 
 Dates use the server's local timezone; hover over a date for its ISO timestamp
 and UTC offset. Directory dates describe the directory itself, not its newest
@@ -130,8 +136,8 @@ is sanitized; Mermaid uses its strict security setting and KaTeX disables
 trusted commands.
 
 Renderer scripts, styles, diagram modules, and math fonts are bundled locally.
-No GitHub request, CDN, Node, npm, or Python package installation is needed to
-serve documents. Remote images still require access to their host. Markdown
+Once installed, serving needs no GitHub request, CDN, Node/npm, or additional
+Python packages. Remote images still require access to their host. Markdown
 rendering happens in the browser; HTTP clients receive the viewer HTML at the
 default URL and can request `?raw=1` for the document source. The internal URL
 prefix `/__serve_html__/` is reserved for viewer assets.
@@ -232,7 +238,8 @@ long options, and conflicting arguments. CLI integration uses temporary files
 and a deterministic `ip` fixture. No deployed
 files are used. They also cover Markdown routing, raw responses, GET/HEAD,
 SVG content types, asset paths, and rendering with `--verbose`. Listing checks
-cover nanosecond modification ordering, alphabetical mode and navigation,
+cover all three columns in both directions, date ties and unavailable dates,
+header links and navigation, nanosecond modification ordering, alphabetical mode,
 special filenames, symlink dates, birth-date availability, partial lookup
 results, batching, argument-size fallback, and lookup deadlines.
 
@@ -252,6 +259,11 @@ cd tools/serve-html-assets
 npx playwright install chromium --only-shell
 npm test
 ```
+
+To check an installed wheel, set `HTML_SERVE_TEST_SCRIPT` to its installed
+`html_serve/cli.py` when running either suite. `HTML_SERVE_TEST_PYTHON` selects
+the browser fixture's Python interpreter. These overrides do not replace the
+globally installed command.
 
 Set `SERVE_HTML_CHROMIUM_EXECUTABLE` to use an existing Chromium binary.
 Set `SERVE_HTML_SCREENSHOT` to an absolute PNG path to capture the rendered
@@ -275,4 +287,4 @@ viewer HTML, CSS, and JavaScript live outside `vendor/` and can be edited
 directly. `theme.js` applies the saved preference before stylesheets load.
 The build scopes the pinned light-only and dark-only GitHub Markdown styles
 into one stylesheet so theme changes need no additional download. Build tools
-and test dependencies are excluded from chezmoi deployment.
+and test dependencies are excluded from the runtime wheel.

@@ -24,7 +24,8 @@ from urllib.parse import quote, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "src/html_serve/cli.py"
+SCRIPT = Path(os.environ.get("HTML_SERVE_TEST_SCRIPT",
+                            Path(__file__).resolve().parents[1] / "src/html_serve/cli.py"))
 ASSETS = SCRIPT.parent / "assets"
 SPEC = importlib.util.spec_from_file_location("serve_html", SCRIPT)
 helper = importlib.util.module_from_spec(SPEC)
@@ -62,7 +63,7 @@ class ServeHTML(unittest.TestCase):
                         body = response.read().decode()
                     labels = [label for _, label in self.listing_links(body)]
                     self.assertEqual(labels, list(reversed(names)) + ['nested/', 'broken@'])
-                    self.assertIn('<th scope="col">Created</th>', body)
+                    self.assertIn('aria-label="Created"', body)
                     self.assertIn('aria-sort="descending"', body)
                     self.assertIn('<time datetime=', body)
                     self.assertIn('Unavailable', body)
@@ -80,6 +81,68 @@ class ServeHTML(unittest.TestCase):
                 with client.open(urls[0] + 'nested?sort=title') as response:
                     self.assertTrue(response.url.endswith('/nested/?sort=title'))
                     self.assertEqual(self.listing_links(response.read().decode()), [('../?sort=title', '../')])
+
+    def test_column_sorts_reverse_and_keep_unknown_dates_last(self):
+        entries = [
+            helper.DirectoryEntry('beta', modified_ns=20, created=datetime.fromtimestamp(10, timezone.utc)),
+            helper.DirectoryEntry('Alpha', modified_ns=10, created=datetime.fromtimestamp(20, timezone.utc)),
+            helper.DirectoryEntry('alpha', modified_ns=10, created=datetime.fromtimestamp(20, timezone.utc)),
+            helper.DirectoryEntry('unknown'),
+            helper.DirectoryEntry('old', modified_ns=0, created=datetime.fromtimestamp(0, timezone.utc)),
+        ]
+        cases = [
+            ('title', 'asc', ['Alpha', 'alpha', 'beta', 'old', 'unknown']),
+            ('title', 'desc', ['unknown', 'old', 'beta', 'alpha', 'Alpha']),
+            ('created', 'desc', ['Alpha', 'alpha', 'beta', 'old', 'unknown']),
+            ('created', 'asc', ['old', 'beta', 'Alpha', 'alpha', 'unknown']),
+            ('modified', 'desc', ['beta', 'Alpha', 'alpha', 'old', 'unknown']),
+            ('modified', 'asc', ['old', 'Alpha', 'alpha', 'beta', 'unknown']),
+        ]
+        for column, order, expected in cases:
+            with self.subTest(column=column, order=order):
+                body = helper.render_directory(entries, '/nested/', column,
+                                               sort_order=order, has_parent=True).decode()
+                links = self.listing_links(body)
+                self.assertEqual([label for _, label in links], ['../'] + expected)
+                self.assertIn(f'?sort={column}', links[0][0])
+                self.assertEqual(len(re.findall(r'<th\b[^>]* aria-sort=', body)), 1)
+                direction = 'ascending' if order == 'asc' else 'descending'
+                self.assertIn(f'<th scope="col" aria-sort="{direction}">', body)
+                self.assertNotIn('<nav', body)
+                next_order = 'desc' if order == 'asc' else 'asc'
+                href = f'?sort={column}'
+                if next_order != ('asc' if column == 'title' else 'desc'):
+                    href += f'&amp;order={next_order}'
+                self.assertIn(f'<a href="{href}" aria-label="{column.title()}"', body)
+
+    def test_sort_direction_query_and_navigation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'a').write_text('a')
+            (root / 'z').write_text('z')
+            (root / 'nested').mkdir()
+            os.utime(root / 'a', ns=(10,) * 2)
+            os.utime(root / 'z', ns=(20,) * 2)
+            os.utime(root / 'nested', ns=(30,) * 2)
+            client = build_opener(ProxyHandler({}))
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                cases = [
+                    ('?sort=title&order=desc', ['z', 'nested/', 'a']),
+                    ('?sort=modified&order=asc', ['a', 'z', 'nested/']),
+                    ('?sort=modified&order=invalid', ['nested/', 'z', 'a']),
+                    ('?sort=modified&order=asc&order=desc', ['nested/', 'z', 'a']),
+                ]
+                for query, expected in cases:
+                    with self.subTest(query=query), client.open(urls[0] + query) as response:
+                        self.assertEqual([label for _, label in self.listing_links(response.read().decode())], expected)
+                for column in ('title', 'created', 'modified'):
+                    with self.subTest(column=column), client.open(urls[0] + 'nested?sort=' + column + '&order=asc') as response:
+                        body = response.read().decode()
+                        parent = self.listing_links(body)[0][0]
+                        self.assertIn('?sort=' + column, parent)
+                        if column != 'title':
+                            self.assertIn('&order=asc', parent)
+                        self.assertIn('<th scope="col" aria-sort="ascending">', body)
 
     def test_directory_metadata_follows_links_without_ctime_fallback(self):
         with tempfile.TemporaryDirectory() as temp:
