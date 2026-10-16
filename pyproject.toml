@@ -6,8 +6,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+check = ["playwright>=1.50,<2"]
+
 [project.scripts]
 docserve = "html_serve.cli:main"
+docserve-check = "html_serve.check:main"
 html-serve = "html_serve.cli:main"
 md-serve = "html_serve.cli:main"
 

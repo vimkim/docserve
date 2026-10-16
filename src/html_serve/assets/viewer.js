@@ -1,4 +1,5 @@
-import { Marked, gfmHeadingId, DOMPurify } from "./vendor/markdown.js";
+import { DOMPurify } from "./vendor/markdown.js";
+import { mermaidOptions, parseMarkdown } from "./markdown.js";
 
 const content = document.getElementById("content");
 const rawURL = new URL(location.href);
@@ -27,6 +28,14 @@ const diagrams = [];
 let diagramGeneration = 0;
 let diagramTask;
 let mermaidImport;
+let previewFailure = null;
+
+// The checker reads renderer-owned elements after the current theme pass.
+// Author HTML can use the same CSS classes without becoming a check result.
+export async function diagramState() {
+  await diagramTask;
+  return { error: previewFailure, elements: diagrams.map(({ element }) => element) };
+}
 
 async function drainDiagrams() {
   let finished = 0;
@@ -39,10 +48,7 @@ async function drainDiagrams() {
       mermaid = (await mermaidImport).default;
       if (generation !== diagramGeneration) continue;
       // Initialization and rendering share one queue: Mermaid owns global config.
-      mermaid.initialize({
-        startOnLoad: false, securityLevel: "strict",
-        theme: theme === "dark" ? "dark" : "default", suppressErrorRendering: true,
-      });
+      mermaid.initialize(mermaidOptions(theme));
     } catch (error) {
       loadError = error;
     }
@@ -88,34 +94,15 @@ async function renderDocument(source) {
     return `<${tag} data-preview-slot="${marker}-${index}"></${tag}>`;
   }
 
-  const parser = new Marked({ gfm: true, breaks: false });
-  parser.use(gfmHeadingId());
-  parser.use({ renderer: {
-    code(token) {
-      if (token.lang?.split(/\s+/)[0].toLowerCase() === "mermaid") {
-        return slot("mermaid", token);
-      }
-      return false;
-    },
-  } });
-
-  let math;
+  const { html, math } = await parseMarkdown(source, slot);
   if (source.includes("$")) {
     const stylesheet = document.createElement("link");
     stylesheet.rel = "stylesheet";
     stylesheet.href = new URL("./vendor/katex.css", import.meta.url);
     document.head.append(stylesheet);
-    math = await import("./vendor/math.js");
-    const extension = math.markedKatex();
-    // Let the extension tokenize before Markdown consumes TeX backslashes.
-    // Render after sanitizing the document so KaTeX's styles/MathML survive.
-    for (const rule of extension.extensions) {
-      rule.renderer = (token) => slot("math", token);
-    }
-    parser.use(extension);
   }
 
-  content.innerHTML = DOMPurify.sanitize(parser.parse(source), {
+  content.innerHTML = DOMPurify.sanitize(html, {
     FORBID_TAGS: ["style"], FORBID_ATTR: ["style"],
   });
 
@@ -148,6 +135,7 @@ try {
     document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
   }
 } catch (error) {
+  previewFailure = String(error.message || error);
   renderError(content, "Preview error", "Use Raw to read the document source.", error);
 } finally {
   content.setAttribute("aria-busy", "false");

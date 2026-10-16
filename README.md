@@ -116,6 +116,11 @@ and Markdown. Existing `html-serve` commands keep working.
 Serving requires **Python 3.10+** and Linux **iproute2** (`ip`). The Python
 runtime has no third-party dependencies. Node/npm are for development only.
 
+For automated Mermaid validation, install optional checker support with
+`just checker-setup`, then run `docserve-check mermaid document.md --render --json`.
+It uses the shipped viewer in headless Chromium. Omit `--render` for a syntax
+check. See [setup, exit codes, and guarantees](docs/guide.md#mermaid-checks).
+
 ```sh
 docserve                     # Browse the current directory
 docserve docs/review.md      # Read Markdown, with its Git project as the root

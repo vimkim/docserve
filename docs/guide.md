@@ -282,6 +282,75 @@ rendering happens in the browser; HTTP clients receive the viewer HTML at the
 default URL and can request `?raw=1` for the document source. The internal URL
 prefix `/__serve_html__/` is reserved for viewer assets.
 
+## Mermaid checks
+
+Use the separate `docserve-check` command to validate Mermaid in UTF-8 Markdown:
+
+```sh
+docserve-check mermaid document.md other.md --json
+docserve-check mermaid document.md --render --json
+```
+
+The default mode calls `mermaid.parse` from the installed viewer bundle. It
+checks syntax. `--render` loads the actual Markdown viewer in headless Chromium,
+waits for Mermaid completion, and requires a visible SVG for each diagram in
+both light and dark themes. Both modes use the viewer's Markdown parser,
+including list and blockquote containers, backtick and tilde fences, and
+CommonMark's unclosed-fence behavior. Markdown source linting remains a separate
+check. A render pass does not establish layout quality or rule out clipping,
+overlap, or unreadable labels.
+
+Checking is optional. Serving still has no third-party Python dependencies and
+needs no Node/npm. To add checker support to the editable uv tool, run this
+explicit setup command from the primary main checkout:
+
+```sh
+just checker-setup
+```
+
+It installs the `check` extra (Python Playwright) and its matching Chromium
+headless shell. The normal `just sync` recipe installs serving support only;
+rerun `just checker-setup` after that recipe when you need the checker. For an
+isolated source checkout or wheel, install `docserve[check]` in a virtual
+environment, then run `python -m playwright install chromium --only-shell` with
+that environment's interpreter. See Playwright's
+[installation instructions](https://playwright.dev/python/docs/library) for
+browser system requirements. `SERVE_HTML_CHROMIUM_EXECUTABLE` can select an
+existing compatible Chromium binary. All checker launches are headless.
+
+Checks never install dependencies or download a renderer. They serve in-memory
+document snapshots and installed package assets on a temporary loopback port,
+block external browser requests, and close the browser and server when finished
+or after failure. Adjacent images and other document assets are outside this
+check's scope. The viewer runs in its standalone mode. No serving directory,
+visit history, or personal asset path is needed. Source, editable, and wheel
+installations use their own package resources.
+
+`--timeout SECONDS` sets a positive per-file deadline (default 30 seconds) and
+the browser launch deadline. A stalled check reports incomplete validation;
+other files can still produce results. Exit codes are:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | All requested checks passed, including files with no Mermaid blocks |
+| `1` | At least one diagram has invalid syntax or fails to render |
+| `2` | Usage, input, dependency, missing asset, timeout, or other environment error |
+
+Without `--json`, results include each input path and the opening fence's line
+number. Files with zero diagrams have an explicit message. With `--json`, stdout
+contains one report with `schema_version: 1`, `mode` (`syntax` or `render`),
+`renderer.mermaid` (the shipped version), `files`, `errors`, and `summary`.
+Each file has its original `path`, `status`, `diagrams`, and `errors`. Each
+diagram has a one-based `index`, one-based fence `line`, `status`, and `checks`.
+Each check has `theme` (`null` for syntax, or `light`/`dark`), `status`, and
+`message` (`null` on success). Status is `passed`, `failed`, or `error`;
+an environment error can leave a file or diagram incomplete. Error entries
+contain a stable `code` and a human-readable `message`. Global errors appear in
+the top-level array. `summary` contains `files`, `diagrams`, `failed` (diagram
+failures), and `exit_code`. Environment errors take precedence over diagram
+failures. Consumers should check `schema_version` and `summary.exit_code` before
+using per-diagram results.
+
 ## Server options
 
 The `serve-html` agent skill can also suggest a command after creating an HTML
@@ -360,6 +429,9 @@ dependencies live in `src/html_serve/assets/` and ship in the Python package.
 `just assets` rebuilds the committed vendor files. Node/npm are only needed for
 development and browser tests. Python and browser checks run with `just test`
 and `just browser-test`; `just build` creates wheel and source distributions.
+`just checker-test` exercises the optional checker with real headless Chromium;
+install its browser explicitly with
+`uv run --extra check playwright install chromium --only-shell` first.
 
 The dotfiles repository owns fresh-machine bootstrap, `daily-update`, and old
 script/asset path compatibility. The `vimkim/my-skills` collection owns agent
