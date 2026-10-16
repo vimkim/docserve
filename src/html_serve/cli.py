@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import time
 from typing import Optional
 from urllib.parse import parse_qs, quote, unquote, urlsplit
@@ -515,6 +516,7 @@ def addresses_for_bind(bind, interface=None):
 
 
 def print_links(directory, port, selected_path, addresses):
+    hyperlinks = sys.stdout.isatty() and os.environ.get("TERM") != "dumb"
     print(f"Serving {directory} on port {port}\n\nThen open from your PC:\n")
     links = [("Root directory", "")]
     if selected_path:
@@ -532,8 +534,9 @@ def print_links(directory, port, selected_path, addresses):
             else:
                 label = "LAN"
             url = f"http://{item['address']}:{port}/{path}"
-            print(f"- {url} — {label}")
-        print()
+            # OSC 8 carries the entire target even when the visible URL wraps.
+            link = f"\033]8;;{url}\033\\{url}\033]8;;\033\\" if hyperlinks else url
+            print(f"- {link} — {label}\n")
     print("Press **Ctrl+C** in the SSH terminal when finished.", flush=True)
 
 

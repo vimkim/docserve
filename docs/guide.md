@@ -232,12 +232,19 @@ to stop the server. The port stays bound throughout serving; concurrent runs get
 different ports. The directory includes adjacent CSS, JavaScript, and images.
 
 The **Root directory** section prints a plain root URL for each address, followed
-by a short network label such as Tailscale or LAN. When a selected directory or
-file has a different URL, **Selected path** prints its direct URL for every
-address too. Directory links end in `/`; spaces, Unicode, and special characters
+by a short network label such as Tailscale or LAN. An empty line separates each
+access URL so links are easier to tap in mobile terminals. When a selected
+directory or file has a different URL, **Selected path** prints its direct URL
+for every address too. Directory links end in `/`; spaces, Unicode, and special characters
 are URL-encoded. A selection that is already the root uses the root URLs without
 duplicates. The output needs no Markdown renderer, and terminals that recognize
 URLs can make them clickable.
+
+When writing to a terminal, each URL also carries an OSC 8 hyperlink with its
+full destination. Terminals that support these hyperlinks can open the complete
+URL even when a long filename wraps across lines. The visible URL stays intact
+for copying. Redirected output and terminals with `TERM=dumb` use plain text.
+Click and touch behavior depends on the terminal client.
 
 Successful HTTP requests are quiet by default. Startup links and errors remain
 visible; each HTTP error includes the request method and URL, for example

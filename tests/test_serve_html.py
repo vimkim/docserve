@@ -1,6 +1,6 @@
 """Verify discovery and the foreground CLI's actual HTTP lifecycle."""
 
-from contextlib import contextmanager, redirect_stderr
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 import errno
 from functools import partial
@@ -379,6 +379,29 @@ class ServeHTML(unittest.TestCase):
                         process.kill()
                         process.wait(timeout=5)
                         raise
+
+    def test_terminal_links_keep_full_targets_and_redirected_output_stays_plain(self):
+        selected = "docs/" + quote("한글 review #1's ? " * 20, safe="") + ".md"
+        addresses = [{"interface": "tailscale0", "address": "100.68.111.110"},
+                     {"interface": "eno1", "address": "192.168.4.2"}]
+        urls = [f"http://{item['address']}:7777/{path}"
+                for path in ("", selected) for item in addresses]
+        for terminal, term in ((True, "xterm-256color"), (False, "xterm-256color"),
+                               (True, "dumb")):
+            with self.subTest(terminal=terminal, term=term):
+                output = io.StringIO()
+                with redirect_stdout(output), patch.object(output, "isatty", return_value=terminal), \
+                        patch.dict(os.environ, {"TERM": term}):
+                    helper.print_links(Path("/docs"), 7777, selected, addresses)
+                text = output.getvalue()
+                links = re.findall(r"\x1b\]8;;(.*?)\x1b\\(.*?)\x1b\]8;;\x1b\\", text)
+                if terminal and term != "dumb":
+                    self.assertEqual(links, [(url, url) for url in urls])
+                    text = re.sub(r"\x1b\]8;;.*?\x1b\\", "", text)
+                self.assertNotIn("\x1b", text)
+                self.assertEqual(re.findall(r"^- (http://\S+) — ", text, re.MULTILINE), urls)
+                for url, label in zip(urls, ("Tailscale", "LAN") * 2):
+                    self.assertIn(f"- {url} — {label}\n\n", text)
 
     def test_default_cli_serves_encoded_html_and_adjacent_assets(self):
         with tempfile.TemporaryDirectory(prefix="serve-html-test-") as temp:
