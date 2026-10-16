@@ -24,6 +24,7 @@ class VisitHistory:
         identity = hashlib.sha256(os.fsencode(self.root)).hexdigest()
         self.path = cache / 'html-serve' / 'visits' / (identity + '.json')
         self.memory = []
+        self.unsaved = {}
         self.warning = ''
         self.lock = threading.Lock()
 
@@ -77,23 +78,33 @@ class VisitHistory:
 
     def record(self, path, kind):
         entry = {'path': path, 'kind': kind, 'visited_at': datetime.now(timezone.utc).isoformat()}
-        def insert(entries):
-            return [entry, *(item for item in entries if item['path'] != path)][:100]
         with self.lock:
+            self.unsaved[path] = entry
+            self.unsaved = {item['path']: item for item in self.merge([], self.unsaved.values())}
+            self.memory = self.merge(self.memory, self.unsaved.values())
             try:
                 with self.disk_lock():
-                    self.memory = insert(self.read())
+                    self.memory = self.merge(self.read(), self.unsaved.values())
                     self.save(self.memory)
+                    self.unsaved.clear()
                     self.warning = ''
             except OSError:
-                self.memory = insert(self.memory)
                 self.warning = 'History cannot be saved. Recent visits remain available for this server session.'
+
+    @staticmethod
+    def merge(stored, unsaved):
+        entries = {}
+        for item in [*stored, *unsaved]:
+            previous = entries.get(item['path'])
+            if previous is None or previous['visited_at'] < item['visited_at']:
+                entries[item['path']] = item
+        return sorted(entries.values(), key=lambda item: item['visited_at'], reverse=True)[:100]
 
     def recent(self, query=''):
         with self.lock:
             try:
                 with self.disk_lock():
-                    self.memory = self.read()
+                    self.memory = self.merge(self.read(), self.unsaved.values())
             except OSError:
                 self.warning = 'History cannot be loaded. Showing visits from this server session.'
             results = []

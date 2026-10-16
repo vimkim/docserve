@@ -86,6 +86,34 @@ class FinderTests(unittest.TestCase):
                 self.assertEqual([r['path'] for r in result['results']], ['1.txt'])
                 self.assertIn('server session', result['message'])
 
+    @unittest.skipIf(os.geteuid() == 0, 'Root bypasses the cache permission fixture')
+    def test_history_keeps_unsaved_visits_when_existing_cache_remains_readable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'root'
+            root.mkdir()
+            for name in ('one.txt', 'two.txt', 'three.txt'):
+                (root / name).write_text(name)
+            cache = Path(temp) / 'cache'
+            env = {**os.environ, 'XDG_CACHE_HOME': str(cache)}
+            with self.server(root, '--bind', '127.0.0.1', env=env) as (_, urls, _):
+                base = urls[0]
+                self.visit(base, 'one.txt')
+                cache_directory = cache / 'html-serve/visits'
+                cache_directory.chmod(0o500)
+                try:
+                    self.visit(base, 'two.txt')
+                    self.assertEqual([r['path'] for r in self.request_json(base, 'recent')['results']],
+                                     ['two.txt', 'one.txt'])
+                    self.visit(base, 'three.txt')
+                    self.assertEqual([r['path'] for r in self.request_json(base, 'recent')['results']],
+                                     ['three.txt', 'two.txt', 'one.txt'])
+                finally:
+                    cache_directory.chmod(0o700)
+                self.visit(base, 'one.txt')
+            with self.server(root, '--bind', '127.0.0.1', env=env) as (_, urls, _):
+                self.assertEqual([r['path'] for r in self.request_json(urls[0], 'recent')['results']],
+                                 ['one.txt', 'three.txt', 'two.txt'])
+
     def test_content_results_are_limited_and_large_files_are_reported(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
