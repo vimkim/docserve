@@ -74,6 +74,10 @@ Selected path:
 파일 목록에서는 **Title**, **Created**, **Modified** 헤더를 눌러 정렬할 수 있습니다.
 터미널로 돌아가지 않고 다른 문서도 이어서 열어 보세요.
 
+**Find files**, **Find contents**, **Find directories**에서 경로나 본문을 검색하고 소스를 미리 볼 수 있습니다.
+**Go to root**는 서빙 루트로 이동합니다. **Recently visited**는 최근 연 파일과 디렉터리를 서버 재시작 후에도 보여 줍니다.
+자세한 동작은 [검색과 최근 방문 안내](docs/guide.md#finding-and-revisiting-paths)를 참고하세요.
+
 ## SSH 서버에서 시작하기
 
 [uv](https://docs.astral.sh/uv/)와

@@ -32,7 +32,9 @@ SCRIPT = Path(os.environ.get("HTML_SERVE_TEST_SCRIPT",
 ASSETS = SCRIPT.parent / "assets"
 SPEC = importlib.util.spec_from_file_location("serve_html", SCRIPT)
 helper = importlib.util.module_from_spec(SPEC)
+sys.path.insert(0, str(SCRIPT.parent))
 SPEC.loader.exec_module(helper)
+sys.path.pop(0)
 
 
 def interface(name, address, **extra):
@@ -123,7 +125,7 @@ class ServeHTML(unittest.TestCase):
                 self.assertEqual(len(re.findall(r'<th\b[^>]* aria-sort=', body)), 1)
                 direction = 'ascending' if order == 'asc' else 'descending'
                 self.assertIn(f'<th scope="col" aria-sort="{direction}">', body)
-                self.assertNotIn('<nav', body)
+                self.assertNotIn('aria-label="Sort files"', body)
                 next_order = 'desc' if order == 'asc' else 'asc'
                 href = f'?sort={column}'
                 if next_order != ('asc' if column == 'title' else 'desc'):
@@ -353,8 +355,10 @@ class ServeHTML(unittest.TestCase):
             output_path = Path(temp) / "stdout"
             error_path = Path(temp) / "stderr"
             with output_path.open("w") as stdout, error_path.open("w") as stderr:
+                server_env = dict(os.environ if env is None else env)
+                server_env['XDG_CACHE_HOME'] = (env or {}).get('XDG_CACHE_HOME', str(Path(temp) / 'cache'))
                 process = subprocess.Popen(
-                    [*command, *args], cwd=directory, env=env,
+                    [*command, *args], cwd=directory, env=server_env,
                     stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
                 )
                 try:
@@ -813,6 +817,8 @@ class ServeHTML(unittest.TestCase):
             (directory / "bin").mkdir()
             script = directory / "bin" / "serve-html.py"
             script.write_bytes(SCRIPT.read_bytes())
+            for module in ('finder.py', 'history.py'):
+                (script.parent / module).write_bytes((SCRIPT.parent / module).read_bytes())
             client = build_opener(ProxyHandler({}))
             with self.server(directory, "--bind", "127.0.0.1",
                              command=[sys.executable, str(script), "--directory", temp]) as (_, urls, _):

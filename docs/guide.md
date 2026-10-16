@@ -44,7 +44,7 @@ Sorting works without JavaScript and is recorded in the directory URL:
 column's initial direction. Parent and child directory links retain both
 settings. A bare directory URL starts newest modification first. File links
 retain their normal URLs; browser Back returns to the sorted listing, while
-the Markdown **Files** link opens its parent listing in default order.
+the Markdown **Directory listing** link opens its parent listing in default order.
 
 Dates use the server's local timezone; hover over a date for its ISO timestamp
 and UTC offset. Directory dates describe the directory itself, not its newest
@@ -57,6 +57,59 @@ does not supply it. On Linux, optional GNU Coreutils `stat` supplies birth dates
 in bounded batches; missing tools, unsupported filesystems, or lookup timeouts
 leave the listing usable. Metadata-change time is never substituted for birth
 time. Add `--verbose` to see lookup diagnostics.
+
+## Finding and revisiting paths
+
+The directory listing has **Find files**, **Find contents**, **Find directories**,
+and **Recently visited** buttons. Each opens the same finder screen.
+**Go to root** opens the serving root listing. This is the directory selected
+by the CLI, which can be the enclosing Git repository root.
+
+File and directory queries use fuzzy matching against relative paths.
+For example, `docsrev` can match `docs/design-review.md`.
+Click a result to select it and preview its source on the right.
+Use the arrow keys to select another result. Press Enter or click **Open file**
+or **Open directory** to navigate. Escape closes the finder and returns focus
+to its button. The preview appears below the results on narrow screens.
+
+Search covers the serving root by default. Select **Current directory** to
+search the current directory and its descendants. Search reads `.gitignore`,
+`.ignore`, and `.rgignore` files within the serving root. Hidden and ignored
+entries stay out of results unless **Include hidden and ignored** is selected.
+Git's `.git` internals always stay excluded. These filters do not change the
+ordinary directory listing. Empty directories are searchable.
+Search skips symlinked directories and symlinked files whose targets leave
+the serving root. Ordinary direct links retain their existing behavior.
+
+**Find contents** requires the `rg` (ripgrep) executable on the server.
+The finder explains when it is unavailable. File and directory finding and
+normal viewing still work without it. Content queries use literal text and
+smart case: lowercase queries ignore case, while queries with uppercase
+characters are case-sensitive. Select **Regex** for regular expressions.
+Results include matching line numbers, and the preview highlights the selected
+match. Opening a result uses its normal viewer, including rendered Markdown.
+
+Search returns up to 200 results after scanning at most 20,000 entries.
+Tree scans and content searches each have a three-second execution budget.
+Content search skips files larger than 2 MiB and returns up to 40 matching
+lines per file. The finder reports limited results, skipped large files,
+and invalid patterns. Narrow the query or scope when results are limited.
+Previews show UTF-8 source as text, including HTML, without executing it.
+They read at most 2 MiB and display at most 200 lines and 64 KiB around the
+selected line. Binary files retain their normal open or download action.
+
+**Recently visited** contains the latest 100 distinct files and directories
+opened through browser navigation. Revisiting a path moves it to the top.
+Previews, scripts, images, background requests, and HEAD requests do not add
+visits. Removed paths disappear from results. Type to filter the history.
+Visit order is separate from the listing's modification-time order.
+
+The server stores each serving root's history in a separate file under
+`$XDG_CACHE_HOME/html-serve/visits/`, normally `~/.cache/html-serve/visits/`.
+History survives restarts, port changes, and changes between LAN and VPN
+addresses. Servers for the same root share the history. It stores paths,
+entry types, and visit times, without file contents. If the cache is
+unavailable, the server keeps recent visits in memory for its current session.
 
 ## Paths and file selection
 
@@ -131,7 +184,7 @@ displayed as images. LaTeX equations use KaTeX's supported math syntax; ordinary
 code blocks and inline code remain literal. Invalid diagrams or equations show
 their source and error while the remaining document stays readable.
 
-The toolbar has **Files** and **Raw** links. Add `?raw=1` to a Markdown URL to
+The toolbar has **Directory listing** and **Raw** links. Add `?raw=1` to a Markdown URL to
 read the original source as UTF-8 plain text. Preview requires JavaScript in a
 modern browser. It starts in **light mode**, including when the operating
 system prefers dark. Use the toolbar's **Dark mode** toggle to switch either

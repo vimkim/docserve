@@ -73,6 +73,11 @@ Nearby files appear in a directory listing, with clickable **Title**,
 **Created**, and **Modified** headers. Open another document from there without
 returning to the terminal.
 
+Use **Find files**, **Find contents**, and **Find directories** to search paths
+or text with a source preview. **Go to root** returns to the serving root.
+**Recently visited** keeps files and directories available across server restarts.
+See [finding and revisiting paths](docs/guide.md#finding-and-revisiting-paths).
+
 ## Start on your SSH server
 
 Install [uv](https://docs.astral.sh/uv/) and

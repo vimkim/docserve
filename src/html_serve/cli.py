@@ -21,6 +21,13 @@ import time
 from typing import Optional
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+if __package__:
+    from .finder import Finder, FinderError
+    from .history import VisitHistory
+else:
+    from finder import Finder, FinderError
+    from history import VisitHistory
+
 
 VPN_PREFIXES = ("tailscale", "tun", "tap", "wg", "ppp", "vpn", "zt")
 CONTAINER_PREFIXES = (
@@ -205,6 +212,8 @@ def render_directory(entries, request_path, sort_mode, *, sort_order=None, has_p
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light"><title>{escape(title)}</title>
+<link rel="stylesheet" href="/__serve_html__/navigation.css">
+<script type="module" src="/__serve_html__/navigation.js"></script>
 <style>
 :root {{ color-scheme: light; }}
 body {{ max-width: 1120px; margin: auto; padding: 24px; color: #1f2328; background: #fff; font: 16px system-ui, sans-serif; }}
@@ -225,6 +234,7 @@ td:not(:first-child) {{ white-space: nowrap; font-variant-numeric: tabular-nums;
 @media (max-width: 767px) {{ body {{ padding: 16px; }} }}
 </style></head><body><h1>{escape(title)}</h1>
 <nav aria-label="Directory"><a href="/">Go to root</a></nav>
+<div id="navigation-tools" hidden></div>
 <p>Select a column to sort; select it again to reverse. Times: server local.
 Creation dates are unavailable when the filesystem does not provide them.</p>
 <div class="table-scroll" role="region" aria-label="Files" tabindex="0"><table>
@@ -236,9 +246,16 @@ Creation dates are unavailable when the filesystem does not provide them.</p>
 class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
     """List directories and render Markdown at its original URL."""
 
-    def __init__(self, *args, verbose=False, **kwargs):
+    def __init__(self, *args, verbose=False, finder=None, history=None, **kwargs):
         self.verbose = verbose
+        self.finder = finder or Finder(kwargs.get('directory', os.getcwd()))
+        self.history = history or VisitHistory(kwargs.get('directory', os.getcwd()))
+        self.response_status = None
         super().__init__(*args, **kwargs)
+
+    def send_response(self, code, message=None):
+        self.response_status = code
+        super().send_response(code, message)
 
     def log_request(self, code="-", size="-"):
         if self.verbose:
@@ -289,7 +306,23 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
             raise
 
     def send_head(self):
+        stream = self.route_request()
         request = urlsplit(self.path)
+        destination = self.headers.get('Sec-Fetch-Dest')
+        navigation = (destination == 'document' if destination is not None
+                      else 'text/html' in self.headers.get('Accept', ''))
+        if (self.command == 'GET' and navigation and self.response_status in (200, 304)
+                and not request.path.startswith(PREVIEW_PREFIX)):
+            path = Path(self.translate_path(self.path))
+            relative = path.relative_to(Path(self.directory)).as_posix()
+            self.history.record('' if relative == '.' else relative,
+                                'directory' if path.is_dir() else 'file')
+        return stream
+
+    def route_request(self):
+        request = urlsplit(self.path)
+        if request.path.startswith(PREVIEW_PREFIX + 'api/'):
+            return self.finder_api(request)
         if request.path.startswith(PREVIEW_PREFIX):
             relative = Path(unquote(request.path[len(PREVIEW_PREFIX):]))
             assets = PREVIEW_ASSETS.resolve()
@@ -326,6 +359,37 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 return None
             return self.preview_file(PREVIEW_ASSETS / "viewer.html", "text/html; charset=utf-8")
         return super().send_head()
+
+    def finder_api(self, request):
+        query = parse_qs(request.query, keep_blank_values=True)
+        def value(name, default=''):
+            values = query.get(name, [default])
+            if len(values) != 1:
+                raise FinderError('Repeated query parameters are not supported.')
+            return values[0]
+        try:
+            endpoint = request.path.removeprefix(PREVIEW_PREFIX + 'api/')
+            if endpoint == 'search':
+                result = self.finder.search(value('mode', 'files'), value('q'), value('scope', '/'),
+                                            value('include') == '1', value('regex') == '1')
+            elif endpoint == 'preview':
+                result = self.finder.preview(value('path'), int(value('line', '1')))
+            elif endpoint == 'recent':
+                result = self.history.recent(value('q'))
+            else:
+                raise FinderError('Unknown finder endpoint.', 404)
+            status = 200
+        except (ValueError, OSError) as error:
+            status = error.status if isinstance(error, FinderError) else 400
+            result = {'error': str(error)}
+        encoded = json.dumps(result).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(encoded)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        return io.BytesIO(encoded)
 
 
 def network_addresses(interface=None):
@@ -551,7 +615,8 @@ def main():
     try:
         directory, selected_path = serving_target(args.path, args.directory, args.file)
         addresses = addresses_for_bind(args.bind, args.interface)
-        handler = partial(PreviewHTTPRequestHandler, directory=str(directory), verbose=args.verbose)
+        handler = partial(PreviewHTTPRequestHandler, directory=str(directory), verbose=args.verbose,
+                          finder=Finder(directory), history=VisitHistory(directory))
         with create_server(args.bind, args.port, handler) as server:
             print_links(directory, server.server_port, selected_path, addresses)
             server.serve_forever()

@@ -15,11 +15,12 @@ const require = createRequire(path.join(root, "tools/serve-html-assets/package.j
 const { chromium } = require("playwright");
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60"><rect width="160" height="60" fill="#0969da"/><text x="15" y="35" fill="white">External SVG</text></svg>';
 const filename = "한글 review #1's ?.MD";
-let directory, server, images, browser, baseURL;
+let directory, cacheDirectory, server, images, browser, baseURL;
 let serverOutput = "";
 
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-"));
+  cacheDirectory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-cache-"));
   await mkdir(path.join(directory, "nested/figures"), { recursive: true });
   images = http.createServer((request, response) => {
     response.writeHead(200, { "Content-Type": "image/svg+xml" });
@@ -60,10 +61,15 @@ before(async () => {
     await utimes(file, 1700000000 + index, 1700000000 + index);
   }
   await utimes(path.join(directory, "ordering/subdir"), 1600000000, 1600000000);
+  await mkdir(path.join(directory, 'search-examples/empty'), { recursive: true });
+  await writeFile(path.join(directory, 'search-examples/guide.md'), '# Search example\n한글 Needle.literal\nneedleXliteral\n');
+  await writeFile(path.join(directory, '.finder-hidden.md'), 'Needle.literal\n');
 
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
-    "--directory", directory, "--bind", "127.0.0.1"], { stdio: ["ignore", "pipe", "pipe"] });
+    "--directory", directory, "--bind", "127.0.0.1"], {
+    stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, XDG_CACHE_HOME: cacheDirectory },
+  });
   server.stdout.on("data", (data) => { serverOutput += data; });
   server.stderr.on("data", (data) => { serverOutput += data; });
   const deadline = Date.now() + 5000;
@@ -87,6 +93,7 @@ after(async () => {
   }
   if (images?.listening) await new Promise((resolve) => images.close(resolve));
   if (directory) await rm(directory, { recursive: true, force: true });
+  if (cacheDirectory) await rm(cacheDirectory, { recursive: true, force: true });
 });
 
 async function ready(page) {
@@ -130,6 +137,89 @@ test("directories show listings until an index page is clicked", async () => {
   } finally {
     await page.close();
   }
+});
+
+test("finder previews fuzzy file paths and navigates directories with the keyboard", async () => {
+  const page = await browser.newPage();
+  try {
+    await page.goto(baseURL + 'nested/');
+    const trigger = page.getByRole('button', { name: 'Find files', exact: true });
+    await trigger.click({ timeout: 3000 });
+    const dialog = page.getByRole('dialog', { name: 'Find files', exact: true });
+    await dialog.waitFor();
+    const query = dialog.getByRole('searchbox', { name: 'Search query' });
+    await query.fill('nfigarchsvg');
+    await dialog.getByRole('option').filter({ hasText: 'nested/figures/architecture.svg' }).waitFor();
+    await page.waitForFunction(() => document.querySelector('#finder-preview')?.textContent.includes('<svg'));
+    assert.equal(new URL(page.url()).pathname, '/nested/');
+    await query.press('Escape');
+    await dialog.waitFor({ state: 'hidden' });
+    assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
+    await page.getByRole('button', { name: 'Find directories', exact: true }).click();
+    await page.getByRole('searchbox', { name: 'Search query' }).fill('nfig');
+    await page.getByRole('option').filter({ hasText: 'nested/figures' }).waitFor();
+    await Promise.all([page.waitForURL(baseURL + 'nested/figures/'), page.keyboard.press('Enter')]);
+    await page.getByRole('link', { name: 'Go to root', exact: true }).click();
+    assert.equal(page.url(), baseURL);
+    await page.getByRole('link', { name: 'plain.md', exact: true }).click();
+    await ready(page);
+    await page.getByRole('link', { name: 'Directory listing', exact: true }).click();
+    assert.equal(page.url(), baseURL);
+  } finally { await page.close(); }
+});
+
+test('content finder highlights Unicode matches and exposes scope, hidden files and regex errors', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.goto(baseURL + 'nested/');
+    await page.getByRole('button', { name: 'Find contents', exact: true }).click();
+    const query = page.getByRole('searchbox', { name: 'Search query' });
+    await query.fill('needle.literal');
+    await page.getByRole('option').filter({ hasText: 'search-examples/guide.md' }).waitFor();
+    await page.waitForFunction(() => document.querySelector('#finder-preview mark')?.textContent === 'Needle.literal');
+    assert.equal(await page.locator('#finder-results [role="option"]').count(), 1);
+    await page.getByLabel('Include hidden and ignored', { exact: true }).check();
+    await page.getByRole('option').filter({ hasText: '.finder-hidden.md' }).waitFor();
+    assert.equal(await page.locator('#finder-results [role="option"]').count(), 2);
+    await page.getByRole('combobox', { name: 'Search scope' }).selectOption('current');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '0 results.');
+    await page.getByRole('combobox', { name: 'Search scope' }).selectOption('root');
+    await page.getByLabel('Regex', { exact: true }).check();
+    await query.fill('[');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent.includes('regex parse error'));
+    assert.equal(await page.locator('#finder-results [role="option"]').count(), 0);
+    assert.equal(await page.locator('#finder-open').isVisible(), false);
+  } finally { await page.close(); }
+});
+
+test('recent visits reopen files and directories and finder fits a narrow screen', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  try {
+    await page.goto(baseURL + 'search-examples/');
+    await page.getByRole('link', { name: 'guide.md', exact: true }).click();
+    await ready(page);
+    await page.getByRole('link', { name: 'Directory listing', exact: true }).click();
+    await page.getByRole('link', { name: 'Go to root', exact: true }).click();
+    await page.getByRole('button', { name: 'Recently visited', exact: true }).click();
+    await page.getByRole('searchbox', { name: 'Search query' }).fill('search-examples');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '2 results.');
+    assert.equal(await page.getByRole('option').count(), 2);
+    const file = page.getByRole('option').filter({ hasText: 'search-examples/guide.md' });
+    await file.click();
+    await page.waitForFunction(() => document.querySelector('#finder-preview')?.textContent.includes('# Search example'));
+    const resultBounds = await page.locator('#finder-results').boundingBox();
+    const previewBounds = await page.locator('.finder-preview-pane').boundingBox();
+    assert.ok(previewBounds.y > resultBounds.y);
+    assert.equal(await page.locator('#finder').evaluate(element => element.scrollWidth <= element.clientWidth), true);
+    if (process.env.SERVE_HTML_FINDER_SCREENSHOT) {
+      await page.screenshot({ path: process.env.SERVE_HTML_FINDER_SCREENSHOT });
+    }
+    await page.getByRole('link', { name: 'Open file', exact: true }).click();
+    await ready(page);
+    assert.equal(new URL(page.url()).pathname, '/search-examples/guide.md');
+    const recent = await page.request.get(baseURL + '__serve_html__/api/recent?q=.finder-hidden');
+    assert.deepEqual((await recent.json()).results, []);
+  } finally { await page.close(); }
 });
 
 test("directory sorting and navigation work without JavaScript on a narrow screen", async () => {
