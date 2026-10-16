@@ -201,6 +201,90 @@ class FinderTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, 400)
                 caught.exception.close()
 
+    def test_updated_defaults_to_recursive_html_and_md_in_modification_order(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'root'
+            (root / 'nested/deep').mkdir(parents=True)
+            names = ['old.md', 'nested/deep/new.HTML', 'nested/한글 # ?.MD', 'Alpha.md', 'alpha.md',
+                     'notes.txt', 'page.htm', 'guide.markdown']
+            timestamp = 1700000000_000000000
+            for index, name in enumerate(names):
+                (root / name).write_text(name)
+                # The first three differ only by nanoseconds.
+                modified = timestamp + (index if index < 3 else 0)
+                os.utime(root / name, ns=(modified, modified))
+            (root / 'directory.md').mkdir()
+            (Path(temp) / 'outside.md').write_text('outside')
+            (root / 'outside.md').symlink_to('../outside.md')
+            (root / 'loop').symlink_to('.')
+            env = {**os.environ, 'XDG_CACHE_HOME': str(Path(temp) / 'cache')}
+            with self.server(root, '--bind', '127.0.0.1', env=env) as (_, urls, _):
+                base = urls[0]
+                self.visit(base, 'old.md')
+                result = self.request_json(base, 'search', mode='updated')
+                expected = ['nested/한글 # ?.MD', 'nested/deep/new.HTML', 'Alpha.md', 'alpha.md', 'old.md']
+                self.assertEqual([r['path'] for r in result['results']], expected)
+                self.assertFalse(result['truncated'])
+                self.assertTrue(all(r['kind'] == 'file' and r['modified_at'].endswith('+00:00')
+                                    for r in result['results']))
+                selected = result['results'][0]
+                self.assertIn('%23', selected['url'])
+                preview = self.request_json(base, 'preview', url=selected['url'])
+                self.assertEqual(preview['lines'][0]['text'], selected['path'])
+                self.assertEqual([r['path'] for r in self.request_json(base, 'recent')['results']], ['old.md'])
+                result = self.request_json(base, 'search', mode='updated', q='nd')
+                self.assertEqual([r['path'] for r in result['results']], expected[:2])
+                os.utime(root / 'old.md', ns=(timestamp + 100, timestamp + 100))
+                result = self.request_json(base, 'search', mode='updated')
+                self.assertEqual(result['results'][0]['path'], 'old.md')
+
+    def test_updated_filename_filters_can_be_changed_cleared_and_combined_with_scope(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'nested.md').mkdir()
+            names = ['guide.md', 'Guide.MD', 'draft.md', '.hidden.md', 'notes.txt', 'nested.md/plain.txt']
+            for name in names:
+                (root / name).write_text('text')
+                os.utime(root / name, (1700000000, 1700000000))
+            (root / '.gitignore').write_text('draft.md\n')
+            (root / '.git').mkdir()
+            (root / '.git/private.md').write_text('internal')
+            (root / 'git-link.md').symlink_to('.git/private.md')
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                base = urls[0]
+                def paths(**options):
+                    return [r['path'] for r in self.request_json(base, 'search', mode='updated', **options)['results']]
+                self.assertEqual(paths(), ['Guide.MD', 'guide.md'])
+                self.assertEqual(set(paths(include='1')), {'Guide.MD', 'guide.md', 'draft.md', '.hidden.md'})
+                self.assertEqual(paths(filename=''), ['Guide.MD', 'guide.md', 'nested.md/plain.txt', 'notes.txt'])
+                self.assertEqual(paths(filename=r'\.txt$'), ['nested.md/plain.txt', 'notes.txt'])
+                self.assertEqual(paths(filename=r'^Guide\.MD$'), ['Guide.MD'])
+                self.assertEqual(paths(exclude_filename=r'^guide'), [])
+                self.assertEqual(paths(filename='', scope_url='/nested.md/'), ['nested.md/plain.txt'])
+                self.assertEqual(paths(scope='/nested.md/'), [])  # Match the basename, not directory names.
+                for field in ('filename', 'exclude_filename'):
+                    for pattern in ('[', 'x' * 501):
+                        with self.subTest(field=field, pattern=pattern), self.assertRaises(HTTPError) as caught:
+                            self.request_json(base, 'search', mode='updated', **{field: pattern})
+                        self.assertEqual(caught.exception.code, 400)
+                        caught.exception.close()
+
+    def test_updated_limits_choose_newest_files_across_the_scan_and_report_timeouts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for index in range(205):
+                selected = root / f'{index:03}.md'
+                selected.write_text('text')
+                os.utime(selected, (1700000000 + index, 1700000000 + index))
+            finder = existing.helper.Finder(root)
+            result = finder.search(mode='updated')
+            self.assertEqual([r['path'] for r in result['results']], [f'{i:03}.md' for i in range(204, 4, -1)])
+            self.assertTrue(result['truncated'])
+            with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('rg', 3)):
+                result = finder.search(mode='updated')
+            self.assertEqual(result['results'], [])
+            self.assertTrue(result['truncated'])
+
     def test_ignore_patterns_preserve_escaped_names_and_root_anchors_in_scoped_search(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -307,6 +391,13 @@ class FinderTests(unittest.TestCase):
                 self.assertEqual([r['path'] for r in result['results']], ['readme.md'])
                 result = self.request_json(urls[0], 'preview', path='readme.md')
                 self.assertEqual(result['lines'][0]['text'], '# Find me')
+                with self.assertRaises(HTTPError) as caught:
+                    self.request_json(urls[0], 'search', mode='updated')
+                self.assertEqual(caught.exception.code, 503)
+                self.assertIn('clear the filename filters', json.load(caught.exception)['error'])
+                caught.exception.close()
+                result = self.request_json(urls[0], 'search', mode='updated', filename='')
+                self.assertEqual([r['path'] for r in result['results']], ['readme.md'])
                 with self.assertRaises(HTTPError) as caught:
                     self.request_json(urls[0], 'search', mode='contents', q='Find')
                 self.assertEqual(caught.exception.code, 503)

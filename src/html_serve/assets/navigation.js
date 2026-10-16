@@ -1,13 +1,14 @@
 import "./copy-path.js";
 
 const tools = document.getElementById("navigation-tools");
-const labels = { files: "Find files", contents: "Find contents", directories: "Find directories", recent: "Recently visited" };
+const labels = { files: "Find files", contents: "Find contents", directories: "Find directories", recent: "Recently visited", updated: "Recently updated" };
 tools.innerHTML = `
   <div class="finder-buttons">
     <button type="button" data-find="files">Find files</button>
     <button type="button" data-find="contents">Find contents</button>
     <button type="button" data-find="directories">Find directories</button>
     <button type="button" data-find="recent">Recently visited</button>
+    <button type="button" data-find="updated">Recently updated</button>
   </div>
   <dialog id="finder" aria-labelledby="finder-title">
     <div class="finder-heading"><h2 id="finder-title">Find files</h2><button type="button" id="finder-close">Close</button></div>
@@ -16,6 +17,7 @@ tools.innerHTML = `
       <button type="button" role="tab" data-mode="contents">Contents</button>
       <button type="button" role="tab" data-mode="directories">Directories</button>
       <button type="button" role="tab" data-mode="recent">Recent</button>
+      <button type="button" role="tab" data-mode="updated">Updated</button>
     </div>
     <input id="finder-query" type="search" aria-label="Search query" placeholder="Type to search…" autocomplete="off" spellcheck="false">
     <div id="finder-options">
@@ -56,6 +58,10 @@ const regex = document.getElementById("finder-regex");
 const filename = document.getElementById("finder-filename");
 const excludeFilename = document.getElementById("finder-exclude-filename");
 const recentKind = document.getElementById("finder-recent-kind");
+const filenameFilters = {
+  contents: { include: "", exclude: "" },
+  updated: { include: "\\.(html|md)$", exclude: "" },
+};
 let mode = "files", results = [], selected = -1, generation = 0, previewGeneration = 0;
 let opener, searchAbort, previewAbort, timer;
 
@@ -148,8 +154,8 @@ async function search(current) {
     const data = await api(mode === "recent" ? "recent" : "search", {
       mode, q: query.value, scope_url: scope.value === "current" ? tools.dataset.scopeUrl || location.pathname : "/",
       include: include.checked ? "1" : "0", regex: regex.checked ? "1" : "0",
-      filename: mode === "contents" ? filename.value : "",
-      exclude_filename: mode === "contents" ? excludeFilename.value : "", kind: recentKind.value,
+      filename: filenameFilters[mode] ? filename.value : "",
+      exclude_filename: filenameFilters[mode] ? excludeFilename.value : "", kind: recentKind.value,
     }, searchAbort.signal);
     if (current !== generation) return;
     results = data.results;
@@ -172,6 +178,14 @@ async function search(current) {
         time.className = "finder-snippet";
         time.dateTime = result.visited_at;
         time.textContent = `${result.kind === "directory" ? "Directory" : "File"} · ${new Date(result.visited_at).toLocaleString()}`;
+        option.append(time);
+      } else if ("modified_at" in result) {
+        const time = document.createElement("time");
+        time.className = "finder-snippet";
+        if (result.modified_at) {
+          time.dateTime = result.modified_at;
+          time.textContent = `Modified · ${new Date(result.modified_at).toLocaleString()}`;
+        } else time.textContent = "Modified time unavailable";
         option.append(time);
       }
       option.addEventListener("click", () => { void select(index); });
@@ -204,11 +218,18 @@ function schedule(immediate = false) {
 }
 
 function changeMode(value) {
+  if (filenameFilters[mode]) {
+    filenameFilters[mode] = { include: filename.value, exclude: excludeFilename.value };
+  }
   mode = value;
+  if (filenameFilters[mode]) {
+    filename.value = filenameFilters[mode].include;
+    excludeFilename.value = filenameFilters[mode].exclude;
+  }
   document.getElementById("finder-title").textContent = labels[mode];
   document.getElementById("finder-regex-label").hidden = mode !== "contents";
   document.getElementById("finder-options").hidden = mode === "recent";
-  document.getElementById("finder-filename-filters").hidden = mode !== "contents";
+  document.getElementById("finder-filename-filters").hidden = !filenameFilters[mode];
   document.getElementById("finder-recent-options").hidden = mode !== "recent";
   for (const tab of dialog.querySelectorAll("[data-mode]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.mode === mode));

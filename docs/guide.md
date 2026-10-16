@@ -67,7 +67,7 @@ time. Add `--verbose` to see lookup diagnostics.
 ## Finding and revisiting paths
 
 The directory listing has **Find files**, **Find contents**, **Find directories**,
-and **Recently visited** buttons. Each opens the same finder screen.
+**Recently visited**, and **Recently updated** buttons. Each opens the same finder screen.
 **Go to root** opens the serving root listing. This is the directory selected
 by the CLI, which can be the enclosing Git repository root.
 
@@ -103,10 +103,24 @@ and text files; exclude `^draft` to skip names starting with `draft`.
 These filters always use ripgrep regular expressions, independently of the
 content **Regex** checkbox, and use the same smart-case behavior. Exclusion
 takes precedence. Invalid patterns show an error. Filename filtering shares
-the content search's execution budget.
+the content search's execution budget. The same filename filters are available
+in **Recently updated**, with separate values for each mode.
+
+**Recently updated** recursively lists files by modification time, newest first,
+regardless of visit history. It starts at the serving root, with
+**Include filenames (regex)** set to `\.(html|md)$` to show only `.html` and `.md`
+files, including uppercase extensions. Clear that field to include all file
+types, or edit it and **Exclude filenames (regex)** to choose other filenames.
+Type a fuzzy path query to narrow the results while keeping modification order.
+Equal modification times sort alphabetically. Results show modification times
+and use the same source preview and open controls as file search.
+**Current directory** includes its descendants, and the hidden, ignored, and
+symlink rules above also apply. Filename filtering requires `rg`; clearing both
+filename filters keeps this picker usable without it.
 
 Search returns up to 200 results after scanning at most 20,000 entries.
-Tree scans and content searches each have a three-second execution budget.
+Tree scans, content searches, and Recently updated filtering and modification-time
+lookups each have a three-second execution budget.
 Content search skips files larger than 2 MiB and returns up to 40 matching
 lines per file. The finder reports limited results, skipped large files,
 and invalid patterns. Narrow the query or scope when results are limited.
@@ -155,7 +169,7 @@ the visible names. Enter a subdirectory or use **Parent directory** to browse
 without leaving the document; the parent button stops at the serving root.
 **Full directory listing** opens the normal sortable page.
 
-**Recently visited** and the existing finder buttons are available in the pane.
+**Recently visited**, **Recently updated**, and the other finder buttons are available in the pane.
 The finder's **Current directory** scope uses the directory displayed in the pane.
 Reading a directory in the pane or previewing a result does not add a visit.
 Opening a document in the HTML viewer does. Selecting a file from the compact

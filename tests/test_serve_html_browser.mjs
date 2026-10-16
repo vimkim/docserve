@@ -79,6 +79,12 @@ before(async () => {
   for (const name of ['guide.md', 'draft.md', 'notes.txt', 'nested.md/plain.txt', '한글 #.MD']) {
     await writeFile(path.join(directory, 'filename-examples', name), 'filename-filter-token\n');
   }
+  await mkdir(path.join(directory, 'updates/nested'), { recursive: true });
+  for (const [index, name] of ['old.md', 'nested/new #.HTML', 'latest.txt'].entries()) {
+    const file = path.join(directory, 'updates', name);
+    await writeFile(file, name.endsWith('.HTML') ? '<h1>Recently updated HTML</h1><script>window.previewExecuted = true;</script>' : '# Recently updated example\n');
+    await utimes(file, 1800000000 + index, 1800000000 + index);
+  }
 
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
@@ -400,6 +406,75 @@ test('recent visits filter files and directories, reopen paths and fit a narrow 
     assert.deepEqual((await recent.json()).results, []);
   } finally { await page.close(); }
 });
+
+for (const width of [1280, 390]) {
+  test(`recently updated previews recursive files and allows clearing the default filename filter at ${width}px`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    page.setDefaultTimeout(5000);
+    try {
+      await page.goto(baseURL + 'updates/');
+      const trigger = page.getByRole('button', { name: 'Recently updated', exact: true });
+      assert.equal(await trigger.evaluate(node => node.previousElementSibling.textContent), 'Recently visited');
+      await trigger.click();
+      await page.getByRole('dialog', { name: 'Recently updated', exact: true }).waitFor();
+      const dialog = page.getByRole('dialog');
+      const query = dialog.getByRole('searchbox', { name: 'Search query' });
+      const filename = dialog.getByRole('textbox', { name: 'Include filenames (regex)' });
+      const exclude = dialog.getByRole('textbox', { name: 'Exclude filenames (regex)' });
+      const paths = dialog.locator('.finder-result-path');
+      const waitForPaths = expected => page.waitForFunction(expected =>
+        JSON.stringify([...document.querySelectorAll('#finder-results .finder-result-path')].map(node => node.textContent)) === JSON.stringify(expected), expected);
+      assert.equal(await filename.inputValue(), '\\.(html|md)$');
+      assert.equal(await dialog.getByRole('combobox', { name: 'Search scope' }).inputValue(), 'root');
+      await query.fill('updates');
+      await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
+      await page.waitForFunction(() => document.querySelector('#finder-preview').textContent.includes('<h1>Recently updated HTML</h1>'));
+      assert.equal(await page.evaluate(() => window.previewExecuted), undefined);
+      assert.match(await dialog.locator('time').first().textContent(), /^Modified · /);
+      assert.ok(await dialog.locator('time').first().getAttribute('datetime'));
+      await filename.fill('');
+      await waitForPaths(['updates/latest.txt', 'updates/nested/new #.HTML', 'updates/old.md']);
+      await exclude.fill('\\.txt$');
+      await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
+      await dialog.getByRole('tab', { name: 'Contents', exact: true }).click();
+      assert.equal(await filename.inputValue(), '');
+      assert.equal(await exclude.inputValue(), '');
+      await filename.fill('\\.md$');
+      await dialog.getByRole('tab', { name: 'Updated', exact: true }).click();
+      assert.equal(await filename.inputValue(), '');
+      assert.equal(await exclude.inputValue(), '\\.txt$');
+      await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
+      await exclude.fill('[');
+      await page.waitForFunction(() => document.querySelector('#finder-status').textContent.startsWith('Exclude filenames:'));
+      assert.equal(await paths.count(), 0);
+      assert.equal(await dialog.getByRole('link', { name: 'Open file', exact: true }).isVisible(), false);
+      await exclude.fill('');
+      await filename.fill('\\.(html|md)$');
+      await dialog.getByRole('combobox', { name: 'Search scope' }).selectOption('current');
+      await query.fill('');
+      await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
+      assert.equal(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth), true);
+      if (width < 768) {
+        const resultsBounds = await dialog.locator('#finder-results').boundingBox();
+        const previewBounds = await dialog.locator('.finder-preview-pane').boundingBox();
+        assert.ok(previewBounds.y > resultsBounds.y);
+      }
+      await query.press('ArrowDown');
+      await page.waitForFunction(() => document.querySelector('#finder-preview').textContent.includes('# Recently updated example'));
+      await query.press('Escape');
+      assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
+      await trigger.click();
+      await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
+      await page.waitForFunction(() => document.querySelector('#finder-preview').textContent.includes('<h1>Recently updated HTML</h1>'));
+      await Promise.all([page.waitForURL(baseURL + 'updates/nested/new%20%23.HTML'), query.press('Enter')]);
+      await page.frameLocator('#document-frame').getByRole('heading', { name: 'Recently updated HTML' }).waitFor();
+      await page.locator('#directory-toggle').click();
+      await page.getByRole('button', { name: 'Recently updated', exact: true }).click();
+      await page.getByRole('combobox', { name: 'Search scope' }).selectOption('current');
+      await waitForPaths(['updates/nested/new #.HTML']);
+    } finally { await page.close(); }
+  });
+}
 
 test("directory sorting and navigation work without JavaScript on a narrow screen", async () => {
   const page = await browser.newPage({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });

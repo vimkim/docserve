@@ -13,7 +13,7 @@ The page that shows the immediate files and subdirectories of a served directory
 _Avoid_: Files (as the navigation label for this page)
 
 **Finder**:
-A search screen for locating files, matching file contents, or locating directories within the served tree.
+A screen for finding files or directories, matching file contents, and selecting recently visited or updated paths within the served tree.
 
 **Preview**:
 A view of a selected search result's file contents before the reader opens that result.
@@ -24,3 +24,6 @@ A reader opening a file or directory listing. Selecting a preview or loading a s
 **Recently visited**:
 Files and directories ordered by the reader's most recent visit to each one.
 _Avoid_: Recently modified (which describes changes to file contents or directory entries)
+
+**Recently updated**:
+Files ordered by their latest modification time, regardless of whether the reader has visited them.

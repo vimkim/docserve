@@ -2,6 +2,7 @@
 
 import base64
 import codecs
+from datetime import datetime, timezone
 import fnmatch
 from itertools import islice
 import json
@@ -215,9 +216,11 @@ class Finder:
         return found, truncated
 
     def search(self, mode='files', q='', scope='/', include=False, regex=False,
-               filename='', exclude_filename=''):
-        if mode not in ('files', 'directories', 'contents'):
+               filename=None, exclude_filename=''):
+        if mode not in ('files', 'directories', 'contents', 'updated'):
             raise FinderError('Unknown search mode.')
+        if filename is None:
+            filename = r'\.(html|md)$' if mode == 'updated' else ''
         if len(q) > 500:
             raise FinderError('Search queries must contain at most 500 characters.')
         if len(filename) > 500 or len(exclude_filename) > 500:
@@ -225,6 +228,8 @@ class Finder:
         entries, truncated = self.entries(scope, include)
         if mode == 'contents':
             return self.contents(entries, q, regex, truncated, filename, exclude_filename)
+        if mode == 'updated':
+            return self.updated(entries, q, truncated, filename, exclude_filename)
         matches = []
         for path, directory in entries:
             if directory != (mode == 'directories'):
@@ -237,6 +242,39 @@ class Finder:
                              'url': path_url(path, directory)}
                             for _, path, directory in matches[:RESULT_LIMIT]],
                 'truncated': truncated or len(matches) > RESULT_LIMIT}
+
+    def updated(self, entries, query, truncated, filename, exclude_filename):
+        """Filter paths, then order the scanned files by nanosecond modification time."""
+        deadline = time.monotonic() + SCAN_SECONDS
+        if filename or exclude_filename:
+            executable = shutil.which('rg')
+            if not executable:
+                raise FinderError('Filename filtering requires ripgrep (rg). Install rg on the server '
+                                  'or clear the filename filters.', 503)
+            entries, limited = self.filter_filenames(executable, entries, filename, exclude_filename, deadline)
+            truncated = truncated or limited
+        matches = []
+        for path, directory in entries:
+            if time.monotonic() >= deadline:
+                truncated = True
+                break
+            if directory or fuzzy_rank(query, path) is None:
+                continue
+            try:
+                metadata = self.resolve(path).stat()
+            except (OSError, FinderError):
+                truncated = True
+                continue
+            matches.append((metadata.st_mtime_ns, path))
+        matches.sort(key=lambda item: (-item[0], item[1].casefold(), item[1]))
+        results = []
+        for modified_ns, path in matches[:RESULT_LIMIT]:
+            try:
+                modified_at = datetime.fromtimestamp(modified_ns / 1_000_000_000, timezone.utc).isoformat()
+            except (OverflowError, OSError, ValueError):
+                modified_at = None
+            results.append({'path': path, 'kind': 'file', 'url': path_url(path), 'modified_at': modified_at})
+        return {'results': results, 'truncated': truncated or len(matches) > RESULT_LIMIT}
 
     def filter_filenames(self, executable, entries, filename, exclude_filename, deadline):
         """Use rg's bounded regex engine on NUL-delimited basenames, including newlines."""

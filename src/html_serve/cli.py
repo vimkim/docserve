@@ -494,7 +494,8 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 scope = value('scope') if 'scope' in query else unquote(value('scope_url', '/'), errors='surrogatepass')
                 result = self.finder.search(value('mode', 'files'), value('q'), scope,
                                             value('include') == '1', value('regex') == '1',
-                                            value('filename'), value('exclude_filename'))
+                                            value('filename') if 'filename' in query else None,
+                                            value('exclude_filename'))
             elif endpoint == 'preview':
                 path = value('path') if 'path' in query else unquote(value('url'), errors='surrogatepass')
                 result = self.finder.preview(path, int(value('line', '1')), int(value('column', '0')))

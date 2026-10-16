@@ -81,6 +81,8 @@ See [document navigation](docs/guide.md#document-navigation).
 Use **Find files**, **Find contents**, and **Find directories** to search paths
 or text with a source preview. **Go to root** returns to the serving root.
 **Recently visited** keeps files and directories available across server restarts.
+**Recently updated** finds changed documents recursively, newest first, with an
+editable filename filter that starts with `.html` and `.md` files.
 See [finding and revisiting paths](docs/guide.md#finding-and-revisiting-paths).
 
 ## Read from your phone, too

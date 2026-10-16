@@ -81,6 +81,7 @@ HTML과 Markdown을 열면 상단에 작은 배너가 표시됩니다. **Directo
 
 **Find files**, **Find contents**, **Find directories**에서 경로나 본문을 검색하고 소스를 미리 볼 수 있습니다.
 **Go to root**는 서빙 루트로 이동합니다. **Recently visited**는 최근 연 파일과 디렉터리를 서버 재시작 후에도 보여 줍니다.
+**Recently updated**는 하위 디렉터리의 파일까지 수정 시각이 최신인 순서로 보여 주며, 기본값이 `.html`과 `.md`인 파일명 필터를 편집하거나 지울 수 있습니다.
 자세한 동작은 [검색과 최근 방문 안내](docs/guide.md#finding-and-revisiting-paths)를 참고하세요.
 
 ## SSH 서버에서 시작하기
