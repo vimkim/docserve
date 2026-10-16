@@ -2,6 +2,7 @@
 
 import base64
 import codecs
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import fnmatch
 from itertools import islice
@@ -10,6 +11,7 @@ import os
 from pathlib import Path, PurePosixPath
 import selectors
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -27,6 +29,15 @@ class FinderError(ValueError):
     def __init__(self, message, status=400):
         super().__init__(message)
         self.status = status
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    """A scanned path and reusable directory entry, kept only for this request."""
+
+    path: str
+    directory: bool
+    source: os.DirEntry
 
 
 def segment_matches(pattern, value):
@@ -210,7 +221,7 @@ class Finder:
                         continue
                 except (OSError, RuntimeError, FinderError):
                     continue
-                found.append((path, is_directory))
+                found.append(TreeEntry(path, is_directory, child))
                 if is_directory:
                     stack.append((Path(child.path), path, rules))
         return found, truncated
@@ -231,7 +242,8 @@ class Finder:
         if mode == 'updated':
             return self.updated(entries, q, truncated, filename, exclude_filename)
         matches = []
-        for path, directory in entries:
+        for entry in entries:
+            path, directory = entry.path, entry.directory
             if directory != (mode == 'directories'):
                 continue
             rank = fuzzy_rank(q, path)
@@ -254,18 +266,26 @@ class Finder:
             entries, limited = self.filter_filenames(executable, entries, filename, exclude_filename, deadline)
             truncated = truncated or limited
         matches = []
-        for path, directory in entries:
+        for entry in entries:
             if time.monotonic() >= deadline:
                 truncated = True
                 break
-            if directory or fuzzy_rank(query, path) is None:
+            if entry.directory or fuzzy_rank(query, entry.path) is None:
                 continue
             try:
-                metadata = self.resolve(path).stat()
+                # Ordinary files already passed the tree's traversal checks. Reuse
+                # scandir metadata instead of resolving every ancestor again.
+                # Symlink targets still need validation before following them.
+                metadata = entry.source.stat(follow_symlinks=False)
+                if stat.S_ISLNK(metadata.st_mode):
+                    metadata = self.resolve(entry.path).stat()
+                if not stat.S_ISREG(metadata.st_mode):
+                    truncated = True
+                    continue
             except (OSError, FinderError):
                 truncated = True
                 continue
-            matches.append((metadata.st_mtime_ns, path))
+            matches.append((metadata.st_mtime_ns, entry.path))
         matches.sort(key=lambda item: (-item[0], item[1].casefold(), item[1]))
         results = []
         for modified_ns, path in matches[:RESULT_LIMIT]:
@@ -278,7 +298,7 @@ class Finder:
 
     def filter_filenames(self, executable, entries, filename, exclude_filename, deadline):
         """Use rg's bounded regex engine on NUL-delimited basenames, including newlines."""
-        entries = [(path, directory) for path, directory in entries if not directory]
+        entries = [entry for entry in entries if not entry.directory]
         for pattern, exclude, label in ((filename, False, 'Include filenames'),
                                         (exclude_filename, True, 'Exclude filenames')):
             if not pattern:
@@ -288,7 +308,7 @@ class Finder:
             if exclude:
                 command.append('--invert-match')
             command.extend(['-e', pattern, '--', '-'])
-            names = {os.fsencode(path.rsplit('/', 1)[-1]) for path, _ in entries}
+            names = {os.fsencode(entry.path.rsplit('/', 1)[-1]) for entry in entries}
             data = b''.join(name + b'\x00' for name in sorted(names))
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -303,8 +323,8 @@ class Finder:
                 detail = result.stderr[:4096].decode('utf-8', errors='replace').strip()
                 raise FinderError(f'{label}: {detail or "Invalid filename pattern."}')
             matching = set(result.stdout.split(b'\x00'))
-            entries = [(path, directory) for path, directory in entries
-                       if os.fsencode(path.rsplit('/', 1)[-1]) in matching]
+            entries = [entry for entry in entries
+                       if os.fsencode(entry.path.rsplit('/', 1)[-1]) in matching]
         return entries, False
 
     def contents(self, entries, query, regex, truncated, filename='', exclude_filename=''):
@@ -323,8 +343,9 @@ class Finder:
             command.append('--fixed-strings')
         command.extend(['-e', query, '--'])
         paths, oversized = [], False
-        for path, directory in entries:
-            if not directory:
+        for entry in entries:
+            path = entry.path
+            if not entry.directory:
                 try:
                     if (self.root / path).stat().st_size > FILE_BYTES:
                         oversized = True

@@ -407,6 +407,67 @@ test('recent visits filter files and directories, reopen paths and fit a narrow 
   } finally { await page.close(); }
 });
 
+test('recently updated shows progress and elapsed time until a slow search completes', async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  await page.route('**/__serve_html__/api/search?**', async route => {
+    await pending;
+    await route.continue();
+  });
+  try {
+    await page.goto(baseURL + 'updates/');
+    await page.getByRole('button', { name: 'Recently updated', exact: true }).click();
+    const progress = page.getByRole('progressbar', { name: 'Search in progress' });
+    await progress.waitFor();
+    assert.match(await page.locator('#finder-status').textContent(), /Scanning files.*modification times/);
+    await page.waitForFunction(() => /[1-9]\d*s elapsed/.test(document.querySelector('#finder-elapsed').textContent));
+    assert.equal(await page.locator('#finder-results').getAttribute('aria-busy'), 'true');
+    release();
+    await page.locator('#finder-results[aria-busy="false"]').waitFor();
+    assert.equal(await progress.isVisible(), false);
+    assert.equal(await page.locator('#finder-elapsed').isVisible(), false);
+    assert.match(await page.locator('#finder-status').textContent(), /^\d+ results?\./);
+  } finally {
+    release();
+    await page.close();
+  }
+});
+
+test('recently updated keeps progress on query changes and clears it when closed', async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  await page.route('**/__serve_html__/api/search?**', async route => {
+    await pending;
+    await route.continue();
+  });
+  try {
+    await page.goto(baseURL + 'updates/');
+    const first = page.waitForRequest('**/__serve_html__/api/search?**');
+    const trigger = page.getByRole('button', { name: 'Recently updated', exact: true });
+    await trigger.click();
+    await first;
+    const second = page.waitForRequest(request => new URL(request.url()).searchParams.get('q') === 'old');
+    await page.getByRole('searchbox', { name: 'Search query' }).fill('old');
+    await second;
+    assert.equal(await page.getByRole('progressbar', { name: 'Search in progress' }).isVisible(), true);
+    assert.equal(await page.locator('#finder-results').getAttribute('aria-busy'), 'true');
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#finder-progress').hidden);
+    assert.equal(await page.locator('#finder-progress').getAttribute('hidden'), '');
+    assert.equal(await page.locator('#finder-elapsed').getAttribute('hidden'), '');
+    assert.equal(await page.locator('#finder-results').getAttribute('aria-busy'), 'false');
+    assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
+    release();
+  } finally {
+    release();
+    await page.close();
+  }
+});
+
 for (const width of [1280, 390]) {
   test(`recently updated previews recursive files and allows clearing the default filename filter at ${width}px`, async () => {
     const page = await browser.newPage({ viewport: { width, height: 900 } });
@@ -446,6 +507,8 @@ for (const width of [1280, 390]) {
       await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
       await exclude.fill('[');
       await page.waitForFunction(() => document.querySelector('#finder-status').textContent.startsWith('Exclude filenames:'));
+      assert.equal(await dialog.getByRole('progressbar', { name: 'Search in progress' }).isVisible(), false);
+      assert.equal(await dialog.locator('#finder-elapsed').isVisible(), false);
       assert.equal(await paths.count(), 0);
       assert.equal(await dialog.getByRole('link', { name: 'Open file', exact: true }).isVisible(), false);
       await exclude.fill('');

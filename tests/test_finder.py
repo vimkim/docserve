@@ -285,6 +285,47 @@ class FinderTests(unittest.TestCase):
             self.assertEqual(result['results'], [])
             self.assertTrue(result['truncated'])
 
+    def test_updated_metadata_avoids_rewalking_every_parent_for_each_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            nested = root.joinpath(*['nested'] * 8)
+            nested.mkdir(parents=True)
+            for index in range(80):
+                (nested / f'{index:03}.md').touch()
+            finder = existing.helper.Finder(root)
+            # Count filesystem calls instead of relying on machine-dependent timings.
+            with patch('os.lstat', wraps=os.lstat) as lookups:
+                result = finder.search(mode='updated')
+            self.assertEqual(len(result['results']), 80)
+            self.assertLess(lookups.call_count, 100)
+
+    def test_updated_metadata_validates_symlinks_and_handles_files_changed_after_scanning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'root'
+            root.mkdir()
+            for name in ('target.md', 'changed.md', 'directory.md', 'removed.md'):
+                (root / name).touch()
+                os.utime(root / name, (1700000000, 1700000000))
+            (root / 'alias.md').symlink_to('target.md')
+            outside = Path(temp) / 'outside.md'
+            outside.touch()
+            finder = existing.helper.Finder(root)
+            scan = finder.entries
+
+            def scan_then_change(scope, include):
+                entries, truncated = scan(scope, include)
+                for name in ('changed.md', 'directory.md', 'removed.md'):
+                    (root / name).unlink()
+                (root / 'changed.md').symlink_to(outside)
+                (root / 'directory.md').mkdir()
+                return entries, truncated
+
+            with patch.object(finder, 'entries', side_effect=scan_then_change):
+                result = finder.search(mode='updated')
+            self.assertEqual([r['path'] for r in result['results']], ['alias.md', 'target.md'])
+            self.assertEqual(result['results'][0]['modified_at'], result['results'][1]['modified_at'])
+            self.assertTrue(result['truncated'])
+
     def test_ignore_patterns_preserve_escaped_names_and_root_anchors_in_scoped_search(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -114,6 +114,9 @@ types, or edit it and **Exclude filenames (regex)** to choose other filenames.
 Type a fuzzy path query to narrow the results while keeping modification order.
 Equal modification times sort alphabetically. Results show modification times
 and use the same source preview and open controls as file search.
+While a search is running, the finder shows an animated progress indicator and
+elapsed time. Recently updated also explains that it is scanning files and
+checking modification times. The indicator does not estimate a percentage.
 **Current directory** includes its descendants, and the hidden, ignored, and
 symlink rules above also apply. Filename filtering requires `rg`; clearing both
 filename filters keeps this picker usable without it.

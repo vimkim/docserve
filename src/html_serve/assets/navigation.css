@@ -20,6 +20,9 @@
 #finder input[type="text"] { background: #fff; }
 #finder-filename-help { grid-column: 1 / -1; color: #59636e; font-size: 12px; }
 #finder-status, #finder-preview-status, .finder-help { color: #59636e; font-size: 13px; }
+.finder-search-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+#finder-progress { width: 72px; height: 8px; accent-color: #0969da; }
+#finder-elapsed { color: #59636e; font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .finder-panes { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 16px; flex: 1; min-height: 0; }
 #finder-results { min-width: 0; margin: 0; padding: 0; overflow: auto; list-style: none; border: 1px solid #d1d9e0; border-radius: 6px; }
 #finder-results [role="option"] { padding: 10px; border-bottom: 1px solid #d1d9e0; cursor: pointer; overflow-wrap: anywhere; }

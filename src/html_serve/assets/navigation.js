@@ -33,7 +33,11 @@ tools.innerHTML = `
     <div id="finder-recent-options" hidden>
       <label>Show <select id="finder-recent-kind" aria-label="Recent visit type"><option value="all">All</option><option value="file">Files only</option><option value="directory">Directories only</option></select></label>
     </div>
-    <p id="finder-status" role="status" aria-live="polite"></p>
+    <div class="finder-search-status">
+      <progress id="finder-progress" aria-label="Search in progress" hidden></progress>
+      <p id="finder-status" role="status" aria-live="polite"></p>
+      <span id="finder-elapsed" role="timer" aria-live="off" hidden></span>
+    </div>
     <div class="finder-panes">
       <ul id="finder-results" role="listbox" aria-label="Search results" tabindex="0"></ul>
       <section class="finder-preview-pane" aria-label="File preview">
@@ -49,6 +53,8 @@ const dialog = document.getElementById("finder");
 const query = document.getElementById("finder-query");
 const list = document.getElementById("finder-results");
 const status = document.getElementById("finder-status");
+const progress = document.getElementById("finder-progress");
+const elapsed = document.getElementById("finder-elapsed");
 const preview = document.getElementById("finder-preview");
 const previewStatus = document.getElementById("finder-preview-status");
 const openLink = document.getElementById("finder-open");
@@ -63,7 +69,27 @@ const filenameFilters = {
   updated: { include: "\\.(html|md)$", exclude: "" },
 };
 let mode = "files", results = [], selected = -1, generation = 0, previewGeneration = 0;
-let opener, searchAbort, previewAbort, timer;
+let opener, searchAbort, previewAbort, timer, progressTimer;
+
+function stopProgress() {
+  clearInterval(progressTimer);
+  progress.hidden = true;
+  elapsed.hidden = true;
+  list.setAttribute("aria-busy", "false");
+}
+
+function startProgress() {
+  stopProgress();
+  progress.hidden = false;
+  elapsed.hidden = false;
+  list.setAttribute("aria-busy", "true");
+  status.textContent = mode === "updated" ? "Scanning files and checking modification times…"
+    : mode === "recent" ? "Loading recent visits…" : "Searching…";
+  const started = performance.now();
+  const update = () => { elapsed.textContent = `${Math.floor((performance.now() - started) / 1000)}s elapsed`; };
+  update();
+  progressTimer = setInterval(update, 1000);
+}
 
 async function api(endpoint, parameters, signal) {
   const response = await fetch(`/__serve_html__/api/${endpoint}?${new URLSearchParams(parameters)}`, { signal });
@@ -198,7 +224,7 @@ async function search(current) {
   } catch (error) {
     if (error.name !== "AbortError" && current === generation) status.textContent = error.message;
   } finally {
-    if (current === generation) list.setAttribute("aria-busy", "false");
+    if (current === generation) stopProgress();
   }
 }
 
@@ -211,8 +237,7 @@ function schedule(immediate = false) {
   list.replaceChildren();
   list.removeAttribute("aria-activedescendant");
   query.removeAttribute("aria-activedescendant");
-  list.setAttribute("aria-busy", "true");
-  status.textContent = "Searching…";
+  startProgress();
   const current = ++generation;
   timer = setTimeout(() => { void search(current); }, immediate ? 0 : 120);
 }
@@ -282,6 +307,7 @@ dialog.addEventListener("close", () => {
   clearTimeout(timer);
   searchAbort?.abort();
   generation += 1;
+  stopProgress();
   resetPreview();
   opener?.focus();
 });
