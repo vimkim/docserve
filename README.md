@@ -83,6 +83,19 @@ or text with a source preview. **Go to root** returns to the serving root.
 **Recently visited** keeps files and directories available across server restarts.
 See [finding and revisiting paths](docs/guide.md#finding-and-revisiting-paths).
 
+## Read from your phone, too
+
+**Your agent writes it on the server. You read it on your phone.** Use a mobile
+SSH terminal, or follow your [herdr](https://herdr.dev/) sessions through
+[herdr-web-ui](https://github.com/devswha/herdr-web-ui). Run
+`docserve docs/review.md` in a shell on the server, then tap a printed URL to
+open the rendered document in your phone's browser.
+
+Links have extra spacing for easier tapping. In terminals that support OSC 8
+hyperlinks, each link keeps its full destination even when a long filename
+wraps across the screen. Your phone needs a route to the server, such as the
+same LAN or Tailscale/VPN.
+
 ## Start on your SSH server
 
 Install [uv](https://docs.astral.sh/uv/) and
