@@ -18,6 +18,23 @@ class RecentCLI(unittest.TestCase):
                               cwd=cwd, env={**os.environ, 'PYTHONPATH': str(SOURCE), **(env or {})},
                               capture_output=True, text=True, timeout=10)
 
+    def test_home_sized_tree_finds_newest_document_after_more_than_twenty_thousand_entries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'a-newest').mkdir()
+            (root / 'a-newest/latest.md').write_text('# Newest document')
+            (root / 'z-noise').mkdir()
+            for index in range(20100):
+                (root / 'z-noise' / f'{index:05}.txt').touch()
+            for env in ({}, {'PATH': ''}):
+                with self.subTest(env=env):
+                    result = self.run_recent(root, '--json', env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    report = json.loads(result.stdout)
+                    self.assertEqual([entry['path'] for entry in report['results']], ['a-newest/latest.md'])
+                    self.assertTrue(report['scan_complete'])
+                    self.assertFalse(report['truncated'])
+
     def test_default_directory_is_exact_and_text_paths_are_escaped_and_sorted(self):
         with tempfile.TemporaryDirectory() as temp:
             parent = Path(temp)
@@ -63,17 +80,18 @@ class RecentCLI(unittest.TestCase):
             root = Path(temp)
             (root / 'guide.md').touch()
             for args, env in (((root / 'missing',), {}), ((root / 'guide.md',), {}),
-                              ((root, '--filename', '['), {}), ((root,), {'PATH': ''})):
+                              ((root, '--filename', '['), {}),
+                              ((root, '--filename', r'\.md$'), {'PATH': ''})):
                 with self.subTest(args=args, env=env):
                     result = self.run_recent(*args, env=env)
                     self.assertEqual(result.returncode, 1)
                     self.assertEqual(result.stdout, '')
                     self.assertIn('docserve-recent:', result.stderr)
-            result = self.run_recent(root, '--filename', '', '--json', env={'PATH': ''})
+            result = self.run_recent(root, '--json', env={'PATH': ''})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)['results'][0]['path'], 'guide.md')
 
-    def test_limited_results_have_a_distinct_exit_code_in_both_formats(self):
+    def test_result_limit_preserves_global_order_and_is_a_successful_scan(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for index in range(205):
@@ -81,14 +99,119 @@ class RecentCLI(unittest.TestCase):
                 path.touch()
                 os.utime(path, (1700000000 + index, 1700000000 + index))
             result = self.run_recent(root, '--json')
-            self.assertEqual(result.returncode, 3, result.stderr)
+            self.assertEqual(result.returncode, 0, result.stderr)
             report = json.loads(result.stdout)
             self.assertTrue(report['truncated'])
+            self.assertTrue(report['scan_complete'])
             self.assertEqual(len(report['results']), 200)
             self.assertEqual(report['results'][0]['path'], '204.md')
             self.assertEqual(report['results'][-1]['path'], '005.md')
             self.assertEqual(result.stderr, '')
             result = self.run_recent(root)
-            self.assertEqual(result.returncode, 3)
+            self.assertEqual(result.returncode, 0)
             self.assertEqual(len(result.stdout.splitlines()), 200)
-            self.assertIn('scan may be incomplete', result.stderr)
+            self.assertEqual(result.stderr, '')
+            for limit, expected in ((7, [f'{index:03}.md' for index in range(204, 197, -1)]),
+                                    (0, [f'{index:03}.md' for index in range(204, -1, -1)])):
+                result = self.run_recent(root, '--json', '--limit', limit)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual([entry['path'] for entry in report['results']], expected)
+                self.assertEqual(report['truncated'], bool(limit))
+
+    def test_complex_ignore_globs_finish_without_backtracking(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'nested').mkdir()
+            name = 'a' * 80 + '.md'
+            (root / 'nested' / name).touch()
+            (root / '.gitignore').write_text('nested/' + '*a' * 12 + 'b.md\n')
+            result = self.run_recent(root, '--json', '--timeout', '1')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual([entry['path'] for entry in json.loads(result.stdout)['results']], ['nested/' + name])
+
+    def test_native_and_python_scans_agree_on_ignores_symlinks_and_unusual_names(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'root'
+            (root / 'nested').mkdir(parents=True)
+            (root / 'cache').mkdir()
+            (root / '.git').mkdir()
+            (root / '__serve_html__').mkdir()
+            (root / '.gitignore').write_text('**/draft*.md\ncache/**\nspace\\ name.md\nliteral\\*.md\n')
+            (root / '.ignore').write_text('!draft-keep.md\n')
+            (root / '.rgignore').write_text('nested/omit.md\n')
+            (root / '.fdignore').write_text('*\n')
+            names = ['nested/view.MD', 'nested/draft-keep.md', 'nested/draft-drop.md', 'nested/omit.md',
+                     'cache/secret.md', 'space name.md', 'literal*.md', '한글 #\n?.md',
+                     os.fsdecode(b'bad-\xff.md'), '.hidden.md', '.git/private.md', '__serve_html__/private.md']
+            for name in names:
+                (root / name).write_text('document')
+                os.utime(root / name, (1700000000, 1700000000))
+            (root / 'alias.md').symlink_to('nested/view.MD')
+            (root / 'linked-directory.md').symlink_to('nested')
+            (Path(temp) / 'outside.md').touch()
+            (root / 'outside.md').symlink_to('../outside.md')
+            expected = {'nested/view.MD', 'nested/draft-keep.md', '한글 #\n?.md',
+                        os.fsdecode(b'bad-\xff.md'), 'alias.md'}
+            for include in (False, True):
+                reports = []
+                for env in ({}, {'PATH': ''}):
+                    result = self.run_recent(root, '--json', *(['--include'] if include else []), env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    reports.append(json.loads(result.stdout))
+                self.assertEqual(reports[0], reports[1])
+                paths = {entry['path'] for entry in reports[0]['results']}
+                if include:
+                    self.assertTrue(expected | {'.hidden.md', 'cache/secret.md', 'nested/draft-drop.md'} <= paths)
+                    self.assertFalse({'.git/private.md', '__serve_html__/private.md', 'outside.md',
+                                      'linked-directory.md'} & paths)
+                else:
+                    self.assertEqual(paths, expected)
+
+    def test_timeout_kills_scanner_and_does_not_emit_a_misleading_partial_ranking(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'guide.md').touch()
+            executable = root / 'fd'
+            pid = root / 'scanner.pid'
+            executable.write_text(f'#!{sys.executable}\nimport os, time\n'
+                                  f'open({str(pid)!r}, "w").write(str(os.getpid()))\n'
+                                  'print("guide.md\\0", end="", flush=True)\ntime.sleep(60)\n')
+            executable.chmod(0o755)
+            result = self.run_recent(root, '--json', '--timeout', '0.2', env={'PATH': str(root)})
+            self.assertEqual(result.returncode, 3)
+            report = json.loads(result.stdout)
+            self.assertEqual(report['results'], [])
+            self.assertFalse(report['scan_complete'])
+            self.assertTrue(report['truncated'])
+            self.assertIn('Increase --timeout', result.stderr)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int(pid.read_text()), 0)
+
+    def test_python_timeout_is_not_silently_reported_as_complete(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'unrelated.txt').touch()
+            result = self.run_recent(root, '--json', '--timeout', '0.000001', env={'PATH': ''})
+            self.assertEqual(result.returncode, 3)
+            report = json.loads(result.stdout)
+            self.assertFalse(report['scan_complete'])
+            self.assertEqual(report['results'], [])
+
+    def test_invalid_limits_and_scanner_errors_do_not_look_like_success(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for option, value in (('--limit', '-1'), ('--limit', 'no'), ('--timeout', '0'),
+                                  ('--timeout', 'nan'), ('--timeout', 'inf')):
+                with self.subTest(option=option, value=value):
+                    result = self.run_recent(root, option, value)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, '')
+            executable = root / 'fd'
+            executable.write_text(f'#!{sys.executable}\nimport sys\n'
+                                  'print("scanner failure", file=sys.stderr)\nsys.exit(2)\n')
+            executable.chmod(0o755)
+            result = self.run_recent(root, '--json', env={'PATH': str(root)})
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout, '')
+            self.assertIn('scanner failure', result.stderr)

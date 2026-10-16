@@ -310,21 +310,22 @@ class FinderTests(unittest.TestCase):
             outside = Path(temp) / 'outside.md'
             outside.touch()
             finder = existing.helper.Finder(root)
-            scan = finder.entries
+            scan = finder.updated_entries
 
-            def scan_then_change(scope, include):
-                entries, truncated = scan(scope, include)
+            def scan_then_change(scope, include, filename, deadline):
+                entries = list(scan(scope, include, filename, deadline))
                 for name in ('changed.md', 'directory.md', 'removed.md'):
                     (root / name).unlink()
                 (root / 'changed.md').symlink_to(outside)
                 (root / 'directory.md').mkdir()
-                return entries, truncated
+                yield from entries
 
-            with patch.object(finder, 'entries', side_effect=scan_then_change):
+            with patch.object(finder, 'updated_entries', side_effect=scan_then_change):
                 result = finder.search(mode='updated')
             self.assertEqual([r['path'] for r in result['results']], ['alias.md', 'target.md'])
             self.assertEqual(result['results'][0]['modified_at'], result['results'][1]['modified_at'])
-            self.assertTrue(result['truncated'])
+            self.assertFalse(result['truncated'])
+            self.assertTrue(result['scan_complete'])
 
     def test_ignore_patterns_preserve_escaped_names_and_root_anchors_in_scoped_search(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -432,8 +433,11 @@ class FinderTests(unittest.TestCase):
                 self.assertEqual([r['path'] for r in result['results']], ['readme.md'])
                 result = self.request_json(urls[0], 'preview', path='readme.md')
                 self.assertEqual(result['lines'][0]['text'], '# Find me')
+                result = self.request_json(urls[0], 'search', mode='updated')
+                self.assertEqual([r['path'] for r in result['results']], ['readme.md'])
+                self.assertTrue(result['scan_complete'])
                 with self.assertRaises(HTTPError) as caught:
-                    self.request_json(urls[0], 'search', mode='updated')
+                    self.request_json(urls[0], 'search', mode='updated', filename=r'\.md$')
                 self.assertEqual(caught.exception.code, 503)
                 self.assertIn('clear the filename filters', json.load(caught.exception)['error'])
                 caught.exception.close()

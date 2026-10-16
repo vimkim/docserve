@@ -514,6 +514,30 @@ test('recently updated shows progress and elapsed time until a slow search compl
   }
 });
 
+test('recently updated distinguishes newest-result limits from incomplete scans', async () => {
+  const page = await browser.newPage();
+  let incomplete = false;
+  await page.route('**/__serve_html__/api/search?**', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify(incomplete
+      ? { results: [], truncated: true, scan_complete: false, message: 'Scan exceeded the 30-second limit. Search a narrower directory.' }
+      : { results: [{ path: 'updates/old.md', kind: 'file', url: '/updates/old.md', modified_at: '2023-11-14T22:13:20+00:00' }], truncated: true, scan_complete: true }),
+  }));
+  try {
+    await page.goto(baseURL + 'updates/');
+    await page.getByRole('button', { name: 'Recently updated', exact: true }).click();
+    const status = page.locator('#finder-status');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '1 result. Showing the newest matches.');
+    assert.equal(await page.getByRole('progressbar', { name: 'Search in progress' }).isVisible(), false);
+    incomplete = true;
+    await page.getByRole('searchbox', { name: 'Search query' }).fill('retry');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent.includes('Scan exceeded the 30-second limit.'));
+    assert.equal(await page.locator('#finder-results [role="option"]').count(), 0);
+    assert.equal(await page.locator('#finder-open').isVisible(), false);
+    assert.equal((await status.textContent()).includes('Showing the newest'), false);
+  } finally { await page.close(); }
+});
+
 test('recently updated keeps progress on query changes and clears it when closed', async () => {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);

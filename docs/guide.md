@@ -121,12 +121,21 @@ While a search is running, the finder shows an animated progress indicator and
 elapsed time. Recently updated also explains that it is scanning files and
 checking modification times. The indicator does not estimate a percentage.
 **Current directory** includes its descendants, and the hidden, ignored, and
-symlink rules above also apply. Filename filtering requires `rg`; clearing both
-filename filters keeps this picker usable without it.
+symlink rules above also apply. The default `.html`/`.md` filter and an empty
+filter work without `rg`. Other filename regexes require `rg`.
 
-Search returns up to 200 results after scanning at most 20,000 entries.
-Tree scans, content searches, and Recently updated filtering and modification-time
-lookups each have a three-second execution budget.
+Recently updated scans the complete scope before selecting the newest 200 files.
+It uses `fd` or `fdfind` when available, with up to eight worker threads.
+Otherwise, it uses Python. Both methods apply the same serving-root ignore rules.
+Install `fd` for faster scans of large directory trees.
+Unreadable paths and files that disappear during the scan are skipped.
+The scan has a 30-second deadline and no entry-count limit.
+If the deadline expires, the finder shows a timeout message without a partial
+ranking. A completed scan with more than 200 matches shows the newest matches.
+
+File, directory, and content searches return up to 200 results after scanning
+at most 20,000 entries. Their tree scans and content searches each have a
+three-second execution budget.
 Content search skips files larger than 2 MiB and returns up to 40 matching
 lines per file. The finder reports limited results, skipped large files,
 and invalid patterns. Narrow the query or scope when results are limited.
@@ -161,6 +170,8 @@ Run the same Recently updated search without an HTTP server:
 ```sh
 docserve-recent ~
 docserve-recent docs --json
+docserve-recent ~ --limit 0 --json
+docserve-recent ~ --limit 50 --timeout 60
 docserve-recent . --query review --filename '\.(md|txt)$' --exclude-filename '^draft'
 docserve-recent . --filename '' --include
 ```
@@ -169,19 +180,25 @@ The optional directory defaults to the current directory. The command searches
 that directory, without selecting its Git repository root. It uses the finder's
 ignore, symlink, filename filter, fuzzy query, and modification order rules.
 `--include` includes hidden and ignored entries. The default filename filter
-selects `.html` and `.md` files. Filename filters require `rg`.
+selects `.html` and `.md` files. The default filter works without external tools.
+Other filename regexes require `rg`.
 
 Text output shows local modification times and absolute paths, one file per line.
 It escapes backslashes, newlines, carriage returns, and tabs in paths.
-`--json` emits `root`, `results`, and `truncated`. Each result contains the finder's
+`--json` emits `root`, `results`, `truncated`, and `scan_complete`. Each result contains the finder's
 relative `path`, `kind`, `url`, and UTC `modified_at`.
 
-The command retains the finder's 20,000-entry scan limit, 200-result limit, and
-separate three-second budgets for scanning and filtering/metadata checks.
-An incomplete scan can omit the newest files. Text output warns on stderr.
-JSON sets `truncated` to `true`. Exit codes are `0` for complete results,
-`1` for search or input errors, `2` for usage errors, and `3` for limited results.
-Search a narrower directory when results are limited.
+The command scans the complete directory tree before selecting the newest files.
+It uses the same scanner as the browser's Recently updated finder.
+`--limit N` sets the output limit, with 200 as the default. Use `--limit 0` for
+all matching files. A completed scan exits with `0`, even when the output limit
+sets `truncated` to `true`. In this case, `scan_complete` remains `true`.
+
+`--timeout SECONDS` sets a positive deadline for scanning, filtering, and metadata
+checks, with 30 seconds as the default. If the deadline expires, the command
+returns no files and exits with `3`. JSON sets `scan_complete` to `false` and
+includes a `message`. Stderr explains how to increase the timeout.
+Exit codes `1` and `2` indicate search/input errors and usage errors, respectively.
 
 From a source checkout, use `uv run docserve-recent ~` or
 `PYTHONPATH=src python -m html_serve.recent ~` before installation.

@@ -258,7 +258,12 @@ async function search(current) {
       option.addEventListener("dblclick", () => { location.href = result.url; });
       list.append(option);
     }
-    status.textContent = `${results.length} result${results.length === 1 ? "" : "s"}.${data.truncated ? " Results are limited; narrow your search." : ""}${data.message ? " " + data.message : ""}`;
+    let limitMessage = "";
+    if (data.truncated) {
+      if (mode === "updated" && data.scan_complete === true) limitMessage = " Showing the newest matches.";
+      else if (data.scan_complete !== false) limitMessage = " Results are limited; narrow your search.";
+    }
+    status.textContent = `${results.length} result${results.length === 1 ? "" : "s"}.${limitMessage}${data.message ? " " + data.message : ""}`;
     if (results.length) void select(0);
     else previewStatus.textContent = "No result selected.";
   } catch (error) {

@@ -2,13 +2,17 @@
 
 import base64
 import codecs
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import fnmatch
+from functools import lru_cache
+import heapq
 from itertools import islice
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import selectors
 import shutil
 import stat
@@ -21,6 +25,8 @@ from urllib.parse import quote
 RESULT_LIMIT = 200
 ENTRY_LIMIT = 20000
 SCAN_SECONDS = 3
+UPDATED_SECONDS = 30
+UPDATED_FILENAME = r'\.(html|md)$'
 PREVIEW_BYTES = 65536
 FILE_BYTES = 2 * 1024 * 1024
 
@@ -31,16 +37,26 @@ class FinderError(ValueError):
         self.status = status
 
 
+class ScanTimeout(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class TreeEntry:
-    """A scanned path and reusable directory entry, kept only for this request."""
+    """A relative path with metadata from scandir or an absolute filename."""
 
     path: str
     directory: bool
-    source: os.DirEntry
+    source: os.DirEntry | str
+
+    def stat(self):
+        if isinstance(self.source, str):
+            return os.stat(self.source, follow_symlinks=False)
+        return self.source.stat(follow_symlinks=False)
 
 
-def segment_matches(pattern, value):
+@lru_cache(maxsize=8192)
+def segment_matcher(pattern):
     # Git uses backslashes to quote literal characters within a pattern.
     translated, index = [], 0
     while index < len(pattern):
@@ -52,26 +68,33 @@ def segment_matches(pattern, value):
         else:
             translated.append(char)
         index += 1
-    return fnmatch.fnmatchcase(value, ''.join(translated))
+    return re.compile(fnmatch.translate(''.join(translated))).match
 
 
 def path_url(path, directory=False):
     return '/' + quote(path, safe='/', errors='surrogatepass') + ('/' if directory and path else '')
 
 
-def glob_parts(pattern, parts):
-    """Match Git-style path segments, with ** spanning directory boundaries."""
-    positions = {0}
-    for number, segment in enumerate(pattern):
-        if not positions:
-            return False
-        if segment == '**':
-            minimum = min(positions) + (1 if number == len(pattern) - 1 and number else 0)
-            positions = set(range(minimum, len(parts) + 1))
-        else:
-            positions = {index + 1 for index in positions if index < len(parts)
-                         and segment_matches(segment, parts[index])}
-    return len(parts) in positions
+@lru_cache(maxsize=8192)
+def path_matcher(pattern):
+    """Compile segments once and match ** with bounded directory-position sets."""
+    matchers = tuple(None if segment == '**' else segment_matcher(segment)
+                     for segment in pattern.split('/'))
+
+    def matches(value):
+        parts = value.split('/')
+        positions = {0}
+        for number, matcher in enumerate(matchers):
+            if not positions:
+                return False
+            if matcher is None:
+                minimum = min(positions) + (1 if number == len(matchers) - 1 and number else 0)
+                positions = set(range(minimum, len(parts) + 1))
+            else:
+                positions = {index + 1 for index in positions if index < len(parts) and matcher(parts[index])}
+        return len(parts) in positions
+
+    return matches
 
 
 class IgnoreRules:
@@ -83,7 +106,7 @@ class IgnoreRules:
         # Later sources take precedence, as in ripgrep.
         for priority, name in enumerate(('.gitignore', '.ignore', '.rgignore')):
             try:
-                with (directory / name).open(encoding='utf-8', errors='replace') as stream:
+                with open(os.path.join(directory, name), encoding='utf-8', errors='replace') as stream:
                     lines = stream.read(PREVIEW_BYTES).splitlines()
             except OSError:
                 continue
@@ -104,21 +127,20 @@ class IgnoreRules:
                 anchored = line.startswith('/') or '/' in line
                 line = line.removeprefix('/')
                 if line:
-                    rules.append((priority, relative, line, anchored, directory_only, negate))
+                    matcher = path_matcher(line) if anchored else segment_matcher(line)
+                    rules.append((priority, relative, matcher, anchored, directory_only, negate))
         rules.sort(key=lambda rule: rule[0])
         return IgnoreRules(rules)
 
     def excludes(self, relative, directory):
-        ignored = False
-        for _, base, pattern, anchored, directory_only, negate in self.rules:
+        basename = relative.rsplit('/', 1)[-1]
+        for _, base, matcher, anchored, directory_only, negate in reversed(self.rules):
             if directory_only and not directory:
                 continue
-            local = relative[len(base) + 1:] if base else relative
-            matched = (glob_parts(pattern.split('/'), local.split('/')) if anchored
-                       else segment_matches(pattern, local.rsplit('/', 1)[-1]))
-            if matched:
-                ignored = not negate
-        return ignored
+            local = relative[len(base) + 1:] if base and anchored else relative
+            if matcher(local if anchored else basename):
+                return not negate
+        return False
 
 
 def fuzzy_rank(query, path):
@@ -227,20 +249,20 @@ class Finder:
         return found, truncated
 
     def search(self, mode='files', q='', scope='/', include=False, regex=False,
-               filename=None, exclude_filename=''):
+               filename=None, exclude_filename='', limit=RESULT_LIMIT, timeout=UPDATED_SECONDS):
         if mode not in ('files', 'directories', 'contents', 'updated'):
             raise FinderError('Unknown search mode.')
         if filename is None:
-            filename = r'\.(html|md)$' if mode == 'updated' else ''
+            filename = UPDATED_FILENAME if mode == 'updated' else ''
         if len(q) > 500:
             raise FinderError('Search queries must contain at most 500 characters.')
         if len(filename) > 500 or len(exclude_filename) > 500:
             raise FinderError('Filename filters must contain at most 500 characters.')
+        if mode == 'updated':
+            return self.updated(q, scope, include, filename, exclude_filename, limit, timeout)
         entries, truncated = self.entries(scope, include)
         if mode == 'contents':
             return self.contents(entries, q, regex, truncated, filename, exclude_filename)
-        if mode == 'updated':
-            return self.updated(entries, q, truncated, filename, exclude_filename)
         matches = []
         for entry in entries:
             path, directory = entry.path, entry.directory
@@ -255,46 +277,171 @@ class Finder:
                             for _, path, directory in matches[:RESULT_LIMIT]],
                 'truncated': truncated or len(matches) > RESULT_LIMIT}
 
-    def updated(self, entries, query, truncated, filename, exclude_filename):
-        """Filter paths, then order the scanned files by nanosecond modification time."""
-        deadline = time.monotonic() + SCAN_SECONDS
-        if filename or exclude_filename:
-            executable = shutil.which('rg')
-            if not executable:
-                raise FinderError('Filename filtering requires ripgrep (rg). Install rg on the server '
-                                  'or clear the filename filters.', 503)
-            entries, limited = self.filter_filenames(executable, entries, filename, exclude_filename, deadline)
-            truncated = truncated or limited
-        matches = []
-        for entry in entries:
-            if time.monotonic() >= deadline:
-                truncated = True
-                break
-            if entry.directory or fuzzy_rank(query, entry.path) is None:
-                continue
+    def updated_entries(self, scope, include, filename, deadline):
+        """Enumerate the complete scope, with fd acceleration and a Python fallback."""
+        start = self.resolve(scope, directory=True)
+        try:
+            with os.scandir(start):
+                pass
+        except OSError as error:
+            raise FinderError('Search directory is unreadable.', 403) from error
+        relative = start.relative_to(self.root).as_posix()
+        relative = '' if relative == '.' else relative
+        root_name = os.fspath(self.root)
+        inherited = IgnoreRules()
+        ancestor = self.root
+        for part in start.relative_to(self.root).parts:
+            base = '' if ancestor == self.root else ancestor.relative_to(self.root).as_posix()
+            inherited = inherited.beneath(ancestor, base)
+            ancestor /= part
+        contexts = {relative: (inherited.beneath(start, relative), False)}
+
+        def context(base):
+            pending = []
+            while base not in contexts:
+                pending.append(base)
+                if not base:
+                    contexts[base] = (IgnoreRules(), False)
+                    break
+                base = base.rpartition('/')[0]
+            for base in reversed(pending):
+                parent = base.rpartition('/')[0]
+                rules, blocked = contexts[parent]
+                blocked = blocked or (bool(base) and rules.excludes(base, True))
+                contexts[base] = (rules.beneath(os.path.join(root_name, base), base) if not blocked else rules, blocked)
+            return contexts[base]
+
+        executable = shutil.which('fd') or shutil.which('fdfind')
+        if executable:
+            # Apply docserve's serving-root ignore rules below, including .rgignore.
+            # fd-specific and global ignore files must not change the candidate set.
+            command = [executable, '--no-ignore', '--type', 'f', '--type', 'l',
+                       '--exclude', '.git', '--print0', '--color', 'never',
+                       '--threads', str(min(8, os.cpu_count() or 1))]
+            if include:
+                command.append('--hidden')
+            if filename == UPDATED_FILENAME:
+                # fd's --extension option drops names with non-UTF-8 bytes.
+                # Its basename regex preserves those filesystem names.
+                command.append('--ignore-case')
+            command.extend(['--', UPDATED_FILENAME if filename == UPDATED_FILENAME else '',
+                            './' + relative if relative else '.'])
+            with tempfile.TemporaryFile() as paths, tempfile.TemporaryFile() as errors:
+                try:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ScanTimeout()
+                    result = subprocess.run(command, cwd=self.root, stdin=subprocess.DEVNULL,
+                                            stdout=paths, stderr=errors, timeout=remaining)
+                except subprocess.TimeoutExpired as error:
+                    raise ScanTimeout() from error
+                except OSError as error:
+                    raise FinderError('Could not start the recent-file scanner.', 503) from error
+                if result.returncode:
+                    errors.seek(0)
+                    detail = errors.read(4096).decode('utf-8', errors='replace').strip()
+                    raise FinderError(f'Recent-file scanner failed: {detail or result.returncode}', 503)
+                paths.seek(0)
+                pending = b''
+                while chunk := paths.read(65536):
+                    records = (pending + chunk).split(b'\0')
+                    pending = records.pop()
+                    for record in records:
+                        if time.monotonic() >= deadline:
+                            raise ScanTimeout()
+                        path = os.fsdecode(record).removeprefix('./')
+                        if not relative and path.split('/', 1)[0] == '__serve_html__':
+                            continue
+                        if not include:
+                            rules, blocked = context(path.rpartition('/')[0])
+                            if blocked or rules.excludes(path, False):
+                                continue
+                        yield TreeEntry(path, False, os.path.join(root_name, path))
+            return
+
+        # No subprocess dependency is needed for default document filtering.
+        stack = [(os.fspath(start), relative, inherited)]
+        while stack:
+            directory, base, inherited = stack.pop()
+            rules = inherited if include else inherited.beneath(directory, base)
             try:
-                # Ordinary files already passed the tree's traversal checks. Reuse
-                # scandir metadata instead of resolving every ancestor again.
-                # Symlink targets still need validation before following them.
-                metadata = entry.source.stat(follow_symlinks=False)
-                if stat.S_ISLNK(metadata.st_mode):
-                    metadata = self.resolve(entry.path).stat()
-                if not stat.S_ISREG(metadata.st_mode):
-                    truncated = True
-                    continue
-            except (OSError, FinderError):
-                truncated = True
+                with os.scandir(directory) as children:
+                    for child in children:
+                        if time.monotonic() >= deadline:
+                            raise ScanTimeout()
+                        if child.name == '.git' or (not base and child.name == '__serve_html__'):
+                            continue
+                        if not include and child.name.startswith('.'):
+                            continue
+                        try:
+                            is_directory = child.is_dir(follow_symlinks=False)
+                        except OSError:
+                            continue
+                        if (not is_directory and filename == UPDATED_FILENAME
+                                and not child.name.lower().endswith(('.html', '.md'))):
+                            continue
+                        path = base + '/' + child.name if base else child.name
+                        if not include and rules.excludes(path, is_directory):
+                            continue
+                        if is_directory:
+                            stack.append((child.path, path, rules))
+                        else:
+                            yield TreeEntry(path, False, child)
+            except OSError:
                 continue
-            matches.append((metadata.st_mtime_ns, entry.path))
-        matches.sort(key=lambda item: (-item[0], item[1].casefold(), item[1]))
+
+    def updated(self, query, scope, include, filename, exclude_filename, limit, timeout):
+        """Select globally newest files after a complete scan, using bounded result memory."""
+        deadline = time.monotonic() + timeout
+        custom_filename = '' if filename == UPDATED_FILENAME else filename
+        executable = shutil.which('rg') if custom_filename or exclude_filename else None
+        if (custom_filename or exclude_filename) and not executable:
+            raise FinderError('Filename filtering requires ripgrep (rg). Install rg on the server '
+                              'or clear the filename filters.', 503)
+        count = 0
+
+        def matching(entries):
+            nonlocal count
+            while batch := list(islice(entries, 4096)):
+                if executable:
+                    batch, limited = self.filter_filenames(executable, batch, custom_filename,
+                                                           exclude_filename, deadline)
+                    if limited:
+                        raise ScanTimeout()
+                for entry in batch:
+                    if time.monotonic() >= deadline:
+                        raise ScanTimeout()
+                    if fuzzy_rank(query, entry.path) is None:
+                        continue
+                    try:
+                        metadata = entry.stat()
+                        if stat.S_ISLNK(metadata.st_mode):
+                            metadata = self.resolve(entry.path).stat()
+                        if not stat.S_ISREG(metadata.st_mode):
+                            continue
+                    except (OSError, FinderError, RuntimeError):
+                        continue
+                    count += 1
+                    yield -metadata.st_mtime_ns, entry.path.casefold(), entry.path
+
+        try:
+            if executable:
+                _, limited = self.filter_filenames(executable, [], custom_filename, exclude_filename, deadline)
+                if limited:
+                    raise ScanTimeout()
+            with closing(self.updated_entries(scope, include, filename, deadline)) as entries:
+                matches = heapq.nsmallest(limit, matching(entries)) if limit else sorted(matching(entries))
+        except ScanTimeout:
+            return {'results': [], 'truncated': True, 'scan_complete': False,
+                    'message': f'Scan exceeded the {timeout:g}-second limit. Search a narrower directory.'}
         results = []
-        for modified_ns, path in matches[:RESULT_LIMIT]:
+        for negative_modified_ns, _, path in matches:
             try:
-                modified_at = datetime.fromtimestamp(modified_ns / 1_000_000_000, timezone.utc).isoformat()
+                modified_at = datetime.fromtimestamp(-negative_modified_ns / 1_000_000_000, timezone.utc).isoformat()
             except (OverflowError, OSError, ValueError):
                 modified_at = None
             results.append({'path': path, 'kind': 'file', 'url': path_url(path), 'modified_at': modified_at})
-        return {'results': results, 'truncated': truncated or len(matches) > RESULT_LIMIT}
+        return {'results': results, 'truncated': bool(limit and count > limit), 'scan_complete': True}
 
     def filter_filenames(self, executable, entries, filename, exclude_filename, deadline):
         """Use rg's bounded regex engine on NUL-delimited basenames, including newlines."""
