@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 450" role="img" aria-labelledby="title description">
   <title id="title">From an SSH terminal to a document in your browser</title>
-  <desc id="description">An illustrated workflow: run html-serve docs/review.md on a remote server, open the printed URL on your computer, and browse the document and its neighboring files.</desc>
+  <desc id="description">An illustrated workflow: run docserve docs/review.md on a remote server, open the printed URL on your computer, and browse the document and its neighboring files.</desc>
   <rect width="1200" height="450" rx="24" fill="#eef5f2"/>
   <g font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
     <text x="42" y="48" font-size="16" font-weight="700" letter-spacing="2" fill="#346b58">REMOTE FILES. ONE COMMAND. YOUR BROWSER.</text>
@@ -11,7 +11,7 @@
     <circle cx="101" cy="163" r="5" fill="#8cd6b6"/>
     <text x="540" y="169" text-anchor="end" font-size="15" fill="#b6cbc2">SSH terminal</text>
     <g font-family="ui-monospace, 'DejaVu Sans Mono', monospace">
-      <text x="64" y="214" font-size="21" fill="#b5f2cf">$ html-serve docs/review.md</text>
+      <text x="64" y="214" font-size="21" fill="#b5f2cf">$ docserve docs/review.md</text>
       <text x="64" y="258" font-size="17" fill="#b6cbc2">Root directory:</text>
       <text x="64" y="284" font-size="17" fill="#f3faf6">http://100.64.0.12:7777/</text>
       <text x="64" y="329" font-size="17" fill="#b6cbc2">Selected path:</text>

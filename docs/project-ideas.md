@@ -1,35 +1,22 @@
-# Repository names and next improvements
+# Project direction / 프로젝트 방향
 
-These are proposals for review. This documentation change keeps the repository,
-package, and `html-serve` command names as they are. I have not checked name
-availability or trademarks.
+## Selected name: docserve / 선택한 이름: docserve
 
-아래 내용은 검토를 위한 제안입니다. 이번 문서 변경에서는 저장소, 패키지,
-`html-serve` 명령 이름을 유지합니다. 이름 사용 가능 여부와 상표는 확인하지 않았습니다.
+The project and Python distribution use the name **docserve**. It covers both HTML
+and Markdown, including GitHub Flavored Markdown, LaTeX math, and Mermaid diagrams.
+Installation provides `docserve` as the primary command plus `html-serve` and
+`md-serve` as aliases. Every command supports the same formats and options.
 
-## Name recommendation / 이름 제안
+프로젝트와 Python 배포 패키지의 이름은 **docserve**입니다.
+HTML과 Markdown을 모두 포괄하며 GitHub Flavored Markdown, LaTeX 수식,
+Mermaid 다이어그램을 지원합니다. 설치하면 기본 명령인 `docserve`와
+`html-serve`, `md-serve` 별칭을 함께 제공합니다. 세 명령의 기능과 옵션은 같습니다.
 
-| Name | Why it fits | 어울리는 이유 |
-| --- | --- | --- |
-| **readloop** | My first choice. It captures the reason for the tool: create a document, open it, read it, repeat. It covers both HTML and Markdown. | 가장 추천합니다. 문서를 만들고, 열고, 읽는 반복 흐름을 담습니다. HTML과 Markdown을 모두 포괄합니다. |
-| **docport** | Connects documents with the memorable ports that make the command useful. | 문서와 포트를 함께 떠올리게 합니다. 기억하기 쉬운 포트 선택이라는 특징을 살립니다. |
-| **viewloop** | Emphasizes the repeated viewing workflow and leaves room for other document formats. | 반복해서 문서를 열어 보는 흐름을 강조합니다. 다른 형식으로 확장하기에도 자연스럽습니다. |
+Earlier naming ideas included `readloop`, `docport`, `viewloop`, and `docpeek`.
+The user chose `docserve` to state the document-serving purpose directly.
 
-`html-serve` explains the action, but it leaves Markdown and the reading workflow
-out of the name. **readloop** gives the project a clearer identity. The README
-can keep “HTML and Markdown from your SSH terminal” as its descriptive subtitle.
-
-`html-serve`는 동작을 바로 설명하지만 Markdown과 문서를 읽는 흐름은 잘 드러내지 못합니다.
-**readloop**를 쓰면 프로젝트가 생긴 이유를 이름에 담을 수 있습니다.
-부제에는 “SSH 터미널에서 HTML과 Markdown 읽기”처럼 기능을 명확히 설명하면 좋겠습니다.
-
-Before a rename, check availability and choose whether the repository, Python
-package, and CLI should share the new name. A repository rename can be separate
-from a command rename. Keep `html-serve` as a compatibility alias if the CLI changes.
-
-이름을 바꾸기 전에는 사용 가능 여부를 확인하고 저장소, Python 패키지, CLI의 이름을
-어디까지 맞출지 정하면 됩니다. 저장소 이름만 먼저 바꿀 수도 있습니다.
-CLI까지 바꾼다면 기존 `html-serve`는 호환용 별칭으로 유지하는 것을 권합니다.
+앞서 `readloop`, `docport`, `viewloop`, `docpeek`를 검토했습니다.
+사용자는 문서 서빙이라는 목적을 바로 설명하는 `docserve`를 선택했습니다.
 
 ## Next improvements / 다음 개선 제안
 
@@ -56,12 +43,13 @@ CLI까지 바꾼다면 기존 `html-serve`는 호환용 별칭으로 유지하�
 3. **Provide an installation path for other users.** The current `just sync`
    workflow deliberately follows the primary `main` checkout. Document and test
    a separate installation from a Git URL or a released wheel, without requiring
-   the developer's checkout layout. Publish packages only after choosing the name.
+   the developer's checkout layout. Verify package-name availability before
+   publishing a release.
 
    **일반 사용자를 위한 설치 경로 마련하기.** 현재 `just sync`는 기본 체크아웃의
    `main`을 따르도록 설계되어 있습니다. 개발자의 디렉터리 구조에 의존하지 않는
    Git URL 또는 릴리스 wheel 설치 방법을 문서화하고 검증하면 좋겠습니다.
-   패키지 공개는 이름을 정한 뒤 진행하면 됩니다.
+   패키지를 공개하기 전에는 배포 이름의 사용 가능 여부를 확인하면 됩니다.
 
 4. **Help users return across sessions.** Explore a local session list that shows
    running servers, their roots, selected documents, and URLs. Reusing an

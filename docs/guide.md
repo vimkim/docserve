@@ -1,24 +1,27 @@
-# html-serve guide
+# docserve guide
 
 [English overview](../README.md) · [한국어 소개](../README.ko.md)
 
-This guide preserves the command reference and development details from the
-original README.
+This guide contains the command reference and development details.
+See the [development-only security notice](../README.md#docserve) before serving files.
 
-Run `html-serve` in an SSH terminal from the directory you want to serve:
+Run `docserve` in an SSH terminal from the directory you want to serve:
 
 ```sh
-html-serve
-html-serve .
-html-serve '/another/output directory'
-html-serve path/to/review.html
-html-serve README.md
-html-serve -d '/another/output directory' -f review.html
-html-serve --port 8080
+docserve
+docserve .
+docserve '/another/output directory'
+docserve path/to/review.html
+docserve README.md
+docserve -d '/another/output directory' -f review.html
+docserve --port 8080
 ```
 
-The `html-serve` command is installed on PATH. Directory
-URLs always show a listing, even when `index.html` or `index.htm` exists. Click
+Installation adds `docserve`, `html-serve`, and `md-serve` to PATH. All three
+commands use the same server and accept the same arguments. The aliases support
+both HTML and Markdown.
+
+Directory URLs always show a listing, even when `index.html` or `index.htm` exists. Click
 the filename to open that page, or select it explicitly on the command line.
 
 ## Directory listing
@@ -86,14 +89,14 @@ directory, or choose its serving root explicitly with `-d`.
 
 A positional path together with `-d` is an error. A positional file together
 with `-f` is also an error. A positional directory can be combined with `-f`.
-For example, from a repository root, `html-serve docs -f nested/review.html`
+For example, from a repository root, `docserve docs -f nested/review.html`
 serves `docs` and prints a link to `/nested/review.html`;
-`html-serve docs/nested/review.html` serves the repository root and prints a
+`docserve docs/nested/review.html` serves the repository root and prints a
 link to `/docs/nested/review.html` alongside the root listing link.
-`html-serve docs/nested` serves the repository root and also prints a link to
+`docserve docs/nested` serves the repository root and also prints a link to
 `/docs/nested/`. Outside Git, selecting the file serves `docs/nested` and links to
 `/review.html` alongside `/`. To explicitly serve only the file's parent
-directory, use `html-serve docs/nested -f review.html`.
+directory, use `docserve docs/nested -f review.html`.
 
 ## Markdown preview
 
@@ -101,7 +104,7 @@ Click any `.md` or `.markdown` file in the directory listing to read it as a
 rendered page. Direct links and links from other documents also render by
 default, including uppercase extensions. A URL such as `/docs/design.md` stays
 at that address; no preview option or generated `.html` file is needed.
-`html-serve --file README.md` prints links directly to the preview.
+`docserve --file README.md` prints links directly to the preview.
 
 The viewer supports GitHub Flavored Markdown tables, task lists, strikethrough,
 heading anchors, and these document features:
@@ -153,7 +156,7 @@ The `serve-html` agent skill can also suggest a command after creating an HTML
 file. Run that command yourself in an SSH terminal:
 
 ```bash
-html-serve --bind 0.0.0.0 --directory '/absolute/path/to/output' --file 'review.html'
+docserve --bind 0.0.0.0 --directory '/absolute/path/to/output' --file 'review.html'
 ```
 
 The CLI starts a foreground HTTP server, chooses a memorable free port, and
@@ -205,10 +208,10 @@ route to the server.
 
 ## Source and installation
 
-Clone this repository to `~/gh/html-serve` and run `just sync` from its main
-checkout. The recipe installs `html-serve` in `~/.local/bin` as an editable uv
-tool. It requires uv and just; serving requires Python 3.10+ and Linux `ip` for
-network discovery. It has no third-party Python runtime dependencies.
+Clone this repository to `~/gh/docserve` and run `just sync` from its main
+checkout. The recipe installs `docserve` and its `html-serve` and `md-serve` aliases
+in `~/.local/bin` as an editable uv tool. It requires uv and just.
+Serving requires Python 3.10+ and Linux `ip` for network discovery. It has no third-party Python runtime dependencies.
 
 The server lives in `src/html_serve/cli.py`; viewer files and their bundled
 dependencies live in `src/html_serve/assets/` and ship in the Python package.

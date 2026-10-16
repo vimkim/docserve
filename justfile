@@ -2,6 +2,7 @@
 sync:
     @test -d .git || { echo "Run just sync from the primary checkout." >&2; exit 1; }
     @test "$(git branch --show-current)" = main || { echo "Run just sync from main." >&2; exit 1; }
+    @if uv tool list | awk '$1 == "html-serve" { found = 1 } END { exit !found }'; then uv tool uninstall html-serve; fi
     uv tool install --editable . --reinstall
 
 test:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve a directory with Markdown previews and print PC access links until Ctrl+C."""
+"""Preview HTML and Markdown for development and print access links until Ctrl+C."""
 
 import argparse
 from collections import deque
@@ -318,7 +318,7 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 self.send_error(404, "File not found")
                 return None
             if not (PREVIEW_ASSETS / "viewer.html").is_file():
-                self.send_error(500, "Markdown preview assets are missing; reinstall serve-html assets")
+                self.send_error(500, "Markdown preview assets are missing; reinstall docserve")
                 return None
             return self.preview_file(PREVIEW_ASSETS / "viewer.html", "text/html; charset=utf-8")
         return super().send_head()

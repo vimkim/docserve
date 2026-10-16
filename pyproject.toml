@@ -1,18 +1,22 @@
 [project]
-name = "html-serve"
+name = "docserve"
 version = "0.1.0"
-description = "Serve HTML and Markdown with offline previews and terminal access links"
+description = "Development previews for HTML and Markdown with math, diagrams, and automatic ports"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
+docserve = "html_serve.cli:main"
 html-serve = "html_serve.cli:main"
+md-serve = "html_serve.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
+# Keep legacy imports and deployed asset symlinks working after the project rename.
+module-name = "html_serve"
 source-include = ["README.ko.md", "tests/**", "tools/**", "docs/**", "justfile", "AGENTS.md"]
 source-exclude = ["tools/serve-html-assets/node_modules/**"]

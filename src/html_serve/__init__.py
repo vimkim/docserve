@@ -1,1 +1,1 @@
-"""Serve HTML and Markdown from a foreground terminal server."""
+"""docserve development previews, with legacy html_serve imports preserved."""

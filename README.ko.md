@@ -1,4 +1,4 @@
-# html-serve
+# docserve
 
 [English](README.md) · **한국어** · [명령어 가이드 (English)](docs/guide.md)
 
@@ -8,7 +8,15 @@ SSH 서버에 있는 HTML과 Markdown을 명령 하나로 열어 보세요.
 기억하기 쉬운 빈 포트를 고르고, 접속 주소를 찾아 주고,
 주변 파일까지 함께 둘러볼 수 있게 해 줍니다.
 
-![SSH 터미널에서 html-serve docs/review.md를 실행한 뒤, 브라우저에서 문서와 주변 파일 목록을 여는 흐름.](docs/assets/readme-workflow.svg)
+![SSH 터미널에서 docserve docs/review.md를 실행한 뒤, 브라우저에서 문서와 주변 파일 목록을 여는 흐름.](docs/assets/readme-workflow.svg)
+
+> [!WARNING]
+> **개발 용도로만 사용하세요. 프로덕션 서비스에는 사용하지 마세요.**
+> 파일이나 디렉터리를 지정하면 숨김 파일과 민감한 파일을 포함한 Git 저장소 전체가 노출될 수 있습니다.
+> 심볼릭 링크를 통해 서빙 디렉터리 밖의 파일도 노출될 수 있습니다.
+> 기본적으로 모든 IPv4 인터페이스에서 접속을 받으며, 인증이나 TLS를 제공하지 않습니다.
+> 서버에 접근할 수 있는 사람은 서빙 중인 파일을 읽을 수 있으므로 신뢰할 수 있는 개발 네트워크에서만 사용하세요.
+> `-d`로 전용 출력 디렉터리를 지정하거나, `--bind 127.0.0.1`로 실행한 뒤 SSH 터널로 접속하세요.
 
 ## 왜 만들었나요?
 
@@ -24,14 +32,14 @@ AI 에이전트는 읽어 볼 만한 문서를 많이 만들어 줍니다.
 이 흐름을 편하게 이어 줄 작은 명령 하나와 간단한 에이전트 스킬이면
 충분하겠다고 생각했습니다.
 
-그래서 `html-serve`를 만들었습니다.
+그래서 `docserve`를 만들었습니다.
 제 환경에서는 에이전트가 문서를 만든 뒤 스킬을 통해 실행할 명령을 알려 줍니다.
 저는 SSH 터미널에서 그 명령을 실행하고, 제 컴퓨터에서 출력된 링크를 열어 읽습니다.
 
 ## 파일 하나를 지정하면, 주변 맥락도 함께
 
 ```sh
-html-serve docs/review.md
+docserve docs/review.md
 ```
 
 Tailscale을 사용할 때의 링크 예시입니다. 실제 주소와 빈 포트는 환경에 따라 달라집니다.
@@ -72,18 +80,22 @@ Selected path:
 [just](https://github.com/casey/just)를 설치한 뒤 실행하세요.
 
 ```sh
-git clone https://github.com/vimkim/html-serve.git ~/gh/html-serve
-cd ~/gh/html-serve
+git clone https://github.com/vimkim/docserve.git ~/gh/docserve
+cd ~/gh/docserve
 just sync
 ```
+
+`just sync`는 **`docserve`**, **`html-serve`**, **`md-serve`**를 자동으로 설치합니다.
+세 명령은 같은 인자를 받고 HTML과 Markdown을 모두 지원합니다.
+기존 `html-serve` 명령도 그대로 사용할 수 있습니다.
 
 실행에는 **Python 3.10+**와 Linux **iproute2**(`ip`)가 필요합니다.
 별도 Python 런타임 의존성은 없으며, Node/npm은 개발할 때만 사용합니다.
 
 ```sh
-html-serve                     # 현재 디렉터리 둘러보기
-html-serve docs/review.md      # Git 프로젝트를 루트로 Markdown 읽기
-html-serve output/report.html  # 주변 리소스와 함께 HTML 열기
+docserve                     # 현재 디렉터리 둘러보기
+docserve docs/review.md      # Git 프로젝트를 루트로 Markdown 읽기
+docserve output/report.html  # 주변 리소스와 함께 HTML 열기
 ```
 
 SSH 터미널에서 실행한 뒤, 출력된 URL을 제 컴퓨터의 브라우저에서 엽니다.

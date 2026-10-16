@@ -1,4 +1,4 @@
-# html-serve
+# docserve
 
 **English** · [한국어](README.ko.md) · [Command reference](docs/guide.md)
 
@@ -7,7 +7,15 @@
 Open HTML and Markdown from your SSH server with one command. Get a memorable
 free port, links for your network, and the surrounding files to explore.
 
-![An SSH terminal runs html-serve docs/review.md, then a browser displays the document alongside links to nearby files.](docs/assets/readme-workflow.svg)
+![An SSH terminal runs docserve docs/review.md, then a browser displays the document alongside links to nearby files.](docs/assets/readme-workflow.svg)
+
+> [!WARNING]
+> **Development use only. Do not use docserve for production serving.**
+> Passing a file or directory can expose its entire Git repository, including hidden or sensitive files.
+> Symbolic links can expose files outside the serving directory.
+> The server binds to all IPv4 interfaces by default and has no authentication or TLS.
+> Anyone who can reach the server may read the served files. Use only on trusted development networks.
+> Use `-d` to choose a dedicated output directory, or `--bind 127.0.0.1` with an SSH tunnel for local access.
 
 ## Why I built this
 
@@ -22,14 +30,14 @@ coming back.
 My workflow was already a loop: **create a document → serve it → read it → repeat.**
 I wanted a small command and a simple agent skill to make that loop easy.
 
-So I built `html-serve`. In my setup, the skill gives me a command after the
+So I built `docserve`. In my setup, the skill gives me a command after the
 agent creates a document. I run it in the SSH terminal, open the printed link
 on my computer, and read.
 
 ## Give it a file. Keep the context.
 
 ```sh
-html-serve docs/review.md
+docserve docs/review.md
 ```
 
 Example links with Tailscale available. Your address and free port will vary:
@@ -71,18 +79,22 @@ Install [uv](https://docs.astral.sh/uv/) and
 [just](https://github.com/casey/just), then run:
 
 ```sh
-git clone https://github.com/vimkim/html-serve.git ~/gh/html-serve
-cd ~/gh/html-serve
+git clone https://github.com/vimkim/docserve.git ~/gh/docserve
+cd ~/gh/docserve
 just sync
 ```
+
+`just sync` automatically installs **`docserve`**, **`html-serve`**, and
+**`md-serve`**. All three commands accept the same arguments and serve both HTML
+and Markdown. Existing `html-serve` commands keep working.
 
 Serving requires **Python 3.10+** and Linux **iproute2** (`ip`). The Python
 runtime has no third-party dependencies. Node/npm are for development only.
 
 ```sh
-html-serve                     # Browse the current directory
-html-serve docs/review.md      # Read Markdown, with its Git project as the root
-html-serve output/report.html  # Open HTML with its surrounding assets
+docserve                     # Browse the current directory
+docserve docs/review.md      # Read Markdown, with its Git project as the root
+docserve output/report.html  # Open HTML with its surrounding assets
 ```
 
 Run the command in your SSH terminal, then open a printed URL in your computer's
