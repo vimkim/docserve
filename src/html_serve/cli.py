@@ -305,21 +305,22 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
             stream.close()
             raise
 
-    def send_head(self):
-        stream = self.route_request()
+    def end_headers(self):
+        # Complete history I/O before exposing a response whose body is still pending.
         request = urlsplit(self.path)
-        destination = self.headers.get('Sec-Fetch-Dest')
+        headers = getattr(self, 'headers', {})
+        destination = headers.get('Sec-Fetch-Dest')
         navigation = (destination == 'document' if destination is not None
-                      else 'text/html' in self.headers.get('Accept', ''))
+                      else 'text/html' in headers.get('Accept', ''))
         if (self.command == 'GET' and navigation and self.response_status in (200, 304)
                 and not request.path.startswith(PREVIEW_PREFIX)):
             path = Path(self.translate_path(self.path))
             relative = path.relative_to(Path(self.directory)).as_posix()
             self.history.record('' if relative == '.' else relative,
                                 'directory' if path.is_dir() else 'file')
-        return stream
+        super().end_headers()
 
-    def route_request(self):
+    def send_head(self):
         request = urlsplit(self.path)
         if request.path.startswith(PREVIEW_PREFIX + 'api/'):
             return self.finder_api(request)

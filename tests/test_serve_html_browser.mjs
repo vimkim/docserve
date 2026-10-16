@@ -127,12 +127,14 @@ test("directories show listings until an index page is clicked", async () => {
     await page.goto(baseURL);
     assert.equal(await page.getByRole("heading").innerText(), "Directory listing for /");
     await page.getByRole("link", { name: "index.html", exact: true }).click();
+    await page.waitForLoadState('domcontentloaded');
     assert.equal(await page.title(), "Selected index");
     assert.equal(await page.locator("h1").innerText(), "Root index page");
     await page.goto(baseURL + "nested");
     assert.equal(new URL(page.url()).pathname, "/nested/");
     assert.equal(await page.getByRole("heading").innerText(), "Directory listing for /nested/");
     await page.getByRole("link", { name: "index.htm", exact: true }).click();
+    await page.waitForLoadState('domcontentloaded');
     assert.equal(await page.title(), "Selected nested index");
     assert.equal(await page.locator("h1").innerText(), "Nested index page");
   } finally {
