@@ -150,7 +150,8 @@ def directory_entries(path, diagnostic=None):
     return entries
 
 
-def render_directory(entries, request_path, sort_mode, *, sort_order=None, has_parent=False):
+def render_directory(entries, request_path, sort_mode, *, sort_order=None, has_parent=False,
+                     server_directory=None):
     """Return a complete listing without depending on browser JavaScript."""
     def name_key(entry):
         return entry.name.casefold(), entry.name
@@ -191,6 +192,14 @@ def render_directory(entries, request_path, sort_mode, *, sort_order=None, has_p
         except (ValueError, OverflowError, OSError):
             return "Unavailable"
 
+    def copy_button(path, label):
+        if path is None:
+            return ''
+        # Character references preserve carriage returns in unusual filenames.
+        value = escape(os.path.abspath(path), quote=True).replace('\r', '&#13;')
+        return (f'<button type="button" class="copy-path-button" data-copy-path="{value}" '
+                f'aria-label="{escape(label, quote=True)}" hidden>Copy path</button>')
+
     title = "Directory listing for " + unquote(request_path, errors="replace")
     query = sort_query(sort_mode, sort_order)
     rows = []
@@ -207,7 +216,9 @@ def render_directory(entries, request_path, sort_mode, *, sort_order=None, has_p
                 modified = datetime.fromtimestamp(entry.modified_ns / 1_000_000_000, timezone.utc)
             except (ValueError, OverflowError, OSError):
                 pass
-        rows.append(f'<tr><td><a href="{escape(href, quote=True)}">{escape(label, quote=False)}</a></td>'
+        button = copy_button(Path(server_directory) / entry.name if server_directory is not None else None,
+                             'Copy path for ' + entry.name)
+        rows.append(f'<tr><td><a href="{escape(href, quote=True)}">{escape(label, quote=False)}</a>{button}</td>'
                     f'<td>{date_cell(entry.created)}</td><td>{date_cell(modified)}</td></tr>')
     headers = "".join(column_header(column, label) for column, label in
                       (("title", "Title"), ("created", "Created"), ("modified", "Modified")))
@@ -236,7 +247,7 @@ td:first-child {{ min-width: 160px; overflow-wrap: anywhere; }}
 td:not(:first-child) {{ white-space: nowrap; font-variant-numeric: tabular-nums; }}
 @media (max-width: 767px) {{ body {{ padding: 16px; }} }}
 </style></head><body><h1>{escape(title)}</h1>
-<nav aria-label="Directory"><a href="/">Go to root</a></nav>
+<nav aria-label="Directory"><a href="/">Go to root</a> {copy_button(server_directory, 'Copy directory path')}</nav>
 <div id="navigation-tools" hidden></div>
 <p>Select a column to sort; select it again to reverse. Times: server local.
 Creation dates are unavailable when the filesystem does not provide them.</p>
@@ -280,7 +291,8 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         orders = parse_qs(request.query, keep_blank_values=True).get("order")
         sort_order = orders[0] if orders in (["asc"], ["desc"]) else None
         encoded = render_directory(entries, request.path, sort_mode, sort_order=sort_order,
-                                   has_parent=os.path.abspath(path) != os.path.abspath(self.directory))
+                                   has_parent=os.path.abspath(path) != os.path.abspath(self.directory),
+                                   server_directory=path)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
@@ -430,7 +442,8 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                     directory = False
                 entries.append({'name': child.name, 'kind': 'directory' if directory else 'file',
                                 'url': base + quote(child.name, safe='', errors='surrogatepass')
-                                + ('/' if directory else ''), 'symlink': child.is_symlink()})
+                                + ('/' if directory else ''), 'symlink': child.is_symlink(),
+                                'server_path': os.path.abspath(child.path)})
         entries.sort(key=lambda entry: (entry['kind'] != 'directory', entry['name'].casefold(), entry['name']))
         parent = base.rstrip('/').rsplit('/', 1)[0] + '/' if relative else None
         return {'url': base, 'path': relative, 'parent': parent, 'entries': entries}
@@ -489,6 +502,11 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 result = self.history.recent(value('q'), value('kind', 'all'))
             elif endpoint == 'directory':
                 result = self.navigation_directory(value('url', '/'))
+            elif endpoint == 'path':
+                path, _ = self.navigation_path(value('url', '/'))
+                if not (path.is_file() or path.is_dir()):
+                    raise FinderError('Path was not found.', 404)
+                result = {'server_path': os.path.abspath(path)}
             else:
                 raise FinderError('Unknown finder endpoint.', 404)
             status = 200

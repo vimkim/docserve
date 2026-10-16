@@ -1,3 +1,5 @@
+import "./copy-path.js";
+
 const tools = document.getElementById("navigation-tools");
 const labels = { files: "Find files", contents: "Find contents", directories: "Find directories", recent: "Recently visited" };
 tools.innerHTML = `

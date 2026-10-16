@@ -47,6 +47,11 @@ retain their normal URLs; browser Back returns to the sorted listing.
 The document toolbar's **Directory listing** button opens the directory pane;
 **Full directory listing** in that pane opens the normal listing in default order.
 
+**Copy path** beside an entry copies its absolute server filesystem path.
+**Copy path** next to **Go to root** copies the listed directory's path.
+Copy buttons are also available beside entries in the document's directory
+pane. Paths keep the visible symlink name and are copied without shell quoting.
+
 Dates use the server's local timezone; hover over a date for its ISO timestamp
 and UTC offset. Directory dates describe the directory itself, not its newest
 descendant. Symlink dates follow the target while the visible name retains `@`;
@@ -130,6 +135,11 @@ unavailable, the server keeps recent visits in memory for its current session.
 HTML and Markdown start with a compact banner. **Directory listing** opens a
 pane beside the document. Press the button again, use **×**, or press Escape to
 close it and return to the banner. On narrow screens the pane opens as a drawer.
+
+**Copy path** in the banner or floating controls copies the current document's
+absolute server filesystem path. A confirmation appears after copying. Copying
+also works on plain HTTP; if the browser blocks automatic copying, a dialog
+shows the selected path for manual copying.
 
 **Compact view** replaces the banner with floating controls. **Expand banner**
 returns to the banner. The floating controls have their own **Directory listing**

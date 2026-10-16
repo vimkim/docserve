@@ -156,6 +156,98 @@ test("directories show listings until an index page is clicked", async () => {
   }
 });
 
+test('copy buttons use absolute server paths in listings, Markdown and directory panes', async () => {
+  const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await context.newPage();
+  page.setDefaultTimeout(5000);
+  async function copied(button, expected) {
+    await button.click();
+    await page.waitForFunction(async value => await navigator.clipboard.readText() === value, expected);
+    assert.equal(await page.locator('.copy-path-status').textContent(), 'Path copied.');
+  }
+  try {
+    await page.goto(baseURL + 'nested/?sort=title&order=desc');
+    const initialURL = page.url();
+    await copied(page.getByRole('button', { name: `Copy path for ${filename}`, exact: true }), path.join(directory, 'nested', filename));
+    assert.equal(page.url(), initialURL);
+    await copied(page.getByRole('button', { name: 'Copy directory path', exact: true }), path.join(directory, 'nested'));
+    await copied(page.getByRole('button', { name: 'Copy path for figures', exact: true }), path.join(directory, 'nested/figures'));
+    await page.getByRole('link', { name: filename, exact: true }).click();
+    await ready(page);
+    await copied(page.locator('#document-banner .copy-path-button'), path.join(directory, 'nested', filename));
+    await page.locator('#directory-toggle').click();
+    await copied(page.locator('#directory-entries').getByRole('button', { name: 'Copy path for index.htm', exact: true }), path.join(directory, 'nested/index.htm'));
+    assert.equal(new URL(page.url()).pathname, '/nested/' + encodeURIComponent(filename).replaceAll("'", '%27').replaceAll('?', '%3F'));
+    await page.locator('#close-directory').click();
+    await page.locator('#compact-view').click();
+    await copied(page.locator('#document-floating .copy-path-button'), path.join(directory, 'nested', filename));
+    await page.setViewportSize({ width: 320, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  } finally { await context.close(); }
+});
+
+test('HTML copy buttons follow framed navigation in the banner and compact controls', async () => {
+  const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await context.newPage();
+  page.setDefaultTimeout(5000);
+  try {
+    await page.goto(baseURL + 'navigation/' + encodeURIComponent(htmlFilename));
+    const child = page.frameLocator('#document-frame');
+    await child.getByRole('heading', { name: 'Interactive document' }).waitFor();
+    await page.locator('#document-banner .copy-path-button').click();
+    await page.waitForFunction(async value => await navigator.clipboard.readText() === value, path.join(directory, 'navigation', htmlFilename));
+    await child.getByRole('link', { name: 'Next HTML', exact: true }).click();
+    await page.waitForURL(baseURL + 'navigation/second.htm?keep=%20&other=%2B#target');
+    await page.locator('#compact-view').click();
+    await page.locator('#document-floating .copy-path-button').click();
+    await page.waitForFunction(async value => await navigator.clipboard.readText() === value, path.join(directory, 'navigation/second.htm'));
+    await child.getByRole('link', { name: 'First HTML', exact: true }).click();
+    await child.getByRole('link', { name: 'Read Markdown', exact: true }).click();
+    await page.waitForURL(baseURL + 'plain.md');
+    await page.locator('#document-floating .copy-path-button').click();
+    await page.waitForFunction(async value => await navigator.clipboard.readText() === value, path.join(directory, 'plain.md'));
+  } finally { await context.close(); }
+});
+
+test('copy paths work on insecure HTTP and offer manual copying when the browser blocks it', async () => {
+  const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await context.newPage();
+  const reader = await context.newPage();
+  page.setDefaultTimeout(5000);
+  try {
+    await page.route('http://docserve.test:*/**', async route => {
+      const url = new URL(route.request().url());
+      url.hostname = '127.0.0.1';
+      await route.fulfill({ response: await route.fetch({ url: url.href }) });
+    });
+    await reader.goto(baseURL + 'plain.md');
+    await page.goto(baseURL.replace('127.0.0.1', 'docserve.test') + 'nested/');
+    assert.equal(await page.evaluate(() => isSecureContext), false);
+    assert.equal(await page.evaluate(() => !!navigator.clipboard), false);
+    await page.bringToFront();
+    const button = page.getByRole('button', { name: `Copy path for ${filename}`, exact: true });
+    await button.click();
+    await page.locator('.copy-path-status').waitFor();
+    assert.equal(await button.evaluate(node => node === document.activeElement), true);
+    await reader.bringToFront();
+    assert.equal(await reader.evaluate(() => navigator.clipboard.readText()), path.join(directory, 'nested', filename));
+    await page.bringToFront();
+    await page.evaluate(() => { document.execCommand = () => false; });
+    await button.click();
+    const dialog = page.getByRole('dialog', { name: 'Copy server path', exact: true });
+    await dialog.waitFor();
+    const field = dialog.getByRole('textbox', { name: 'Server path', exact: true });
+    assert.equal(await field.inputValue(), path.join(directory, 'nested', filename));
+    assert.equal(await field.evaluate(node => node.selectionStart === 0 && node.selectionEnd === node.value.length), true);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    assert.equal(await button.evaluate(node => node === document.activeElement), true);
+    await reader.bringToFront();
+    await reader.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => { throw new Error('Permission denied'); } } }); });
+    await reader.locator('#document-banner .copy-path-button').click();
+    await reader.locator('.copy-path-status').waitFor();
+  } finally { await context.close(); }
+});
+
 test("finder previews fuzzy file paths and navigates directories with the keyboard", async () => {
   const page = await browser.newPage();
   try {

@@ -46,3 +46,15 @@
   #finder-options select, #finder-recent-options select, #navigation-tools button { padding: 6px 8px; }
   .finder-help { font-size: 11px; }
 }
+.copy-path-button { font: inherit; color: var(--page-text, #1f2328); background: var(--control-bg, #f6f8fa); border: 1px solid var(--border, #d1d9e0); border-radius: 6px; padding: 6px 10px; cursor: pointer; white-space: nowrap; }
+.copy-path-button[hidden] { display: none !important; }
+.copy-path-button:disabled { opacity: .5; cursor: default; }
+.copy-path-button:focus-visible { outline: 2px solid var(--link, #0969da); outline-offset: 3px; }
+td .copy-path-button { margin-inline-start: 12px; font-size: 12px; }
+.copy-path-status { position: fixed; z-index: 20; bottom: 20px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 48px); padding: 10px 16px; margin: 0; border-radius: 8px; color: var(--page-text, #1f2328); background: var(--control-bg, #f6f8fa); border: 1px solid var(--border, #d1d9e0); box-shadow: 0 4px 20px #24344d26; font: 14px system-ui, sans-serif; pointer-events: none; }
+.copy-path-status:empty { display: none; }
+.copy-path-transfer { position: fixed; top: 0; left: 0; opacity: 0; pointer-events: none; }
+.copy-path-dialog { box-sizing: border-box; width: min(560px, 94vw); padding: 20px; color: var(--page-text, #1f2328); background: var(--page-bg, #fff); border: 1px solid var(--border, #d1d9e0); border-radius: 10px; font: 14px system-ui, sans-serif; }
+.copy-path-dialog::backdrop { background: #1f232888; }
+.copy-path-dialog textarea { box-sizing: border-box; width: 100%; padding: 8px; font: 13px ui-monospace, monospace; color: inherit; background: inherit; }
+.copy-path-dialog form { margin-top: 12px; text-align: right; }

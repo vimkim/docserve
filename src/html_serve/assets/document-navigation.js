@@ -1,5 +1,7 @@
 // Shared document controls. The four states are banner, directory, compact,
 // and compact-directory; closing a directory always returns to its own layout.
+import { createCopyPathButton, setCopyPath } from "./copy-path.js";
+
 const standaloneKey = "__docserve_standalone";
 const frame = document.getElementById("document-frame");
 const embedded = window.frameElement?.hasAttribute("data-docserve-document");
@@ -39,6 +41,7 @@ function initialize() {
   let browsingURL = new URL("./", currentURL);
   let directoryData, entries = [], visits = [], request, generation = 0;
   let finderLoaded = false;
+  let copyURL;
   const header = document.querySelector(".toolbar");
   const nav = header.querySelector("nav");
   const extras = frame ? [] : [...nav.children].filter(node => node.id === "raw-link" || node.id === "theme-toggle");
@@ -54,6 +57,8 @@ function initialize() {
     <a id="standalone-link" target="_blank" rel="noopener" aria-label="Open standalone"><span class="standalone-label">Open standalone </span>↗</a>
     <button id="compact-view" type="button" aria-label="Compact view" title="Switch to floating controls">− <span class="compact-label">Compact view</span></button>`;
   nav.querySelector("#standalone-link").before(...extras);
+  const bannerCopy = createCopyPathButton();
+  nav.querySelector("#standalone-link").before(bannerCopy);
 
   const floating = document.createElement("nav");
   floating.id = "document-floating";
@@ -63,6 +68,8 @@ function initialize() {
     <span id="compact-filename"></span>
     <button id="expand-banner" type="button" aria-label="Expand banner" title="Return to the banner">▤ <span class="expand-label">Expand banner</span></button>
     <a id="compact-standalone" target="_blank" rel="noopener" aria-label="Open standalone">↗</a>`;
+  const compactCopy = createCopyPathButton();
+  floating.querySelector("#expand-banner").before(compactCopy);
   const pane = document.createElement("aside");
   pane.id = "document-directory";
   pane.setAttribute("aria-label", "Directory listing");
@@ -144,6 +151,10 @@ function initialize() {
     const original = originalURL(currentURL);
     document.getElementById("standalone-link").href = original;
     document.getElementById("compact-standalone").href = original;
+    if (copyURL !== currentURL.pathname) {
+      copyURL = currentURL.pathname;
+      void loadDocumentPath(copyURL);
+    }
     browsingURL = new URL("./", currentURL);
     tools.dataset.scopeUrl = browsingURL.pathname;
     if (isOpen()) void loadDirectory();
@@ -154,6 +165,16 @@ function initialize() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `Request failed (HTTP ${response.status}).`);
     return data;
+  }
+
+  async function loadDocumentPath(url) {
+    for (const button of [bannerCopy, compactCopy]) setCopyPath(button, "");
+    try {
+      const data = await api("path", { url });
+      if (url === currentURL.pathname) {
+        for (const button of [bannerCopy, compactCopy]) setCopyPath(button, data.server_path);
+      }
+    } catch { /* Keep reading available when path metadata cannot be loaded. */ }
   }
 
   function plainClick(event) {
@@ -195,6 +216,7 @@ function initialize() {
       }
     });
     li.append(link);
+    if (item.server_path) li.append(createCopyPathButton(item.server_path, name));
     return li;
   }
 

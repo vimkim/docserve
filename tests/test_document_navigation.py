@@ -2,6 +2,7 @@
 
 import json
 import os
+from html import escape, unescape
 from pathlib import Path
 import tempfile
 import unittest
@@ -82,6 +83,7 @@ class DocumentNavigationTests(unittest.TestCase):
                 special = data['entries'][-1]
                 self.assertEqual(special['url'], '/docs/' + quote(name, safe=''))
                 self.assertEqual(special['kind'], 'file')
+                self.assertEqual(special['server_path'], str(root / 'docs' / name))
                 self.assertTrue(data['entries'][0]['symlink'])
                 self.assertEqual(directory('/docs/linked/')['entries'][0]['name'], 'direct.txt')
                 self.assertEqual(directory('/docs/nested/')['entries'], [])
@@ -93,6 +95,47 @@ class DocumentNavigationTests(unittest.TestCase):
                     caught.exception.close()
                 with self.assertRaises(HTTPError) as caught:
                     directory('/missing/')
+                self.assertEqual(caught.exception.code, 404)
+                caught.exception.close()
+                with client.open(base + 'recent') as response:
+                    self.assertEqual(json.load(response)['results'], [])
+
+    def test_copy_paths_preserve_server_names_and_validate_document_urls(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'root & "한글'
+            (root / 'docs').mkdir(parents=True)
+            name = '한글 <tag> # "?%2F\r\n.md'
+            target = root / 'docs' / name
+            target.write_text('# Original')
+            (root / 'alias').symlink_to(root / 'docs', target_is_directory=True)
+            client = build_opener(ProxyHandler({}))
+            env = {**os.environ, 'XDG_CACHE_HOME': str(Path(temp) / 'cache')}
+            with self.server(root, '--bind', '127.0.0.1', env=env) as (_, urls, _):
+                base = urls[0] + '__serve_html__/api/'
+
+                def server_path(url):
+                    with client.open(base + 'path?' + urlencode({'url': url})) as response:
+                        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                        return json.load(response)['server_path']
+
+                self.assertEqual(server_path('/'), str(root))
+                self.assertEqual(server_path('/docs/'), str(root / 'docs'))
+                self.assertEqual(server_path('/docs/' + quote(name, safe='') + '?raw=1#heading'), str(target))
+                self.assertEqual(server_path('/alias/' + quote(name, safe='')), str(root / 'alias' / name))
+                with client.open(urls[0] + 'docs/?sort=title') as response:
+                    listing = response.read().decode()
+                encoded = escape(str(target), quote=True).replace('\r', '&#13;')
+                self.assertIn(f'data-copy-path="{encoded}"', listing)
+                self.assertEqual(unescape(encoded), str(target))
+                self.assertNotIn('<tag>', listing)
+                for invalid in ('../outside', '/docs/../', '/%2e%2e/', '/%00/',
+                                'http://elsewhere/docs/', '//elsewhere/docs/', '/__serve_html__/viewer.js'):
+                    with self.subTest(invalid=invalid), self.assertRaises(HTTPError) as caught:
+                        server_path(invalid)
+                    self.assertEqual(caught.exception.code, 400)
+                    caught.exception.close()
+                with self.assertRaises(HTTPError) as caught:
+                    server_path('/missing')
                 self.assertEqual(caught.exception.code, 404)
                 caught.exception.close()
                 with client.open(base + 'recent') as response:
