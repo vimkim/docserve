@@ -1,0 +1,5 @@
+/.venv/
+/dist/
+__pycache__/
+*.pyc
+/tools/serve-html-assets/node_modules/

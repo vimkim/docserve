@@ -1,0 +1,14 @@
+# html-serve
+
+Read README.md for command behavior. The Python server and committed browser
+assets form one installable package. Node/npm are used for asset builds and
+headless browser tests. Keep the runtime independent of Node/npm and CDNs.
+
+For server or asset changes, run `just test`, `just browser-test`, and `just build`.
+Verify that the built wheel includes viewer files, vendor chunks, fonts, and
+third-party notices. Regenerate vendor assets with `just assets` when changing
+browser dependencies; retain the manifest and license notices.
+
+Run `just sync` from the primary main checkout after an approved local merge.
+The editable installation follows that checkout. Use temporary environments to
+test task worktrees without replacing the installed command.

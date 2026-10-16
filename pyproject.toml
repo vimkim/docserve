@@ -1,0 +1,18 @@
+[project]
+name = "html-serve"
+version = "0.1.0"
+description = "Serve HTML and Markdown with offline previews and terminal access links"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+html-serve = "html_serve.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+source-include = ["tests/**", "tools/**", "docs/**", "justfile", "AGENTS.md"]
+source-exclude = ["tools/serve-html-assets/node_modules/**"]
