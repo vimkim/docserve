@@ -14,5 +14,5 @@ requires = ["uv_build>=0.9,<0.10"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-source-include = ["tests/**", "tools/**", "docs/**", "justfile", "AGENTS.md"]
+source-include = ["README.ko.md", "tests/**", "tools/**", "docs/**", "justfile", "AGENTS.md"]
 source-exclude = ["tools/serve-html-assets/node_modules/**"]
