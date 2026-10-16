@@ -13,7 +13,7 @@ import ipaddress
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
@@ -41,6 +41,8 @@ BLOCKED_HTTP_PORTS = frozenset({
     6665, 6666, 6667, 6668, 6669, 6679, 6697,
 })
 MARKDOWN_SUFFIXES = (".md", ".markdown")
+HTML_SUFFIXES = (".html", ".htm")
+STANDALONE_QUERY = "__docserve_standalone"
 PREVIEW_PREFIX = "/__serve_html__/"
 PREVIEW_ASSETS = Path(__file__).resolve().parent / "assets"
 
@@ -310,9 +312,21 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         # Complete history I/O before exposing a response whose body is still pending.
         request = urlsplit(self.path)
         headers = getattr(self, 'headers', {})
+        if getattr(self, 'html_response', False):
+            self.send_header('Vary', 'Sec-Fetch-Dest, Accept')
         destination = headers.get('Sec-Fetch-Dest')
         navigation = (destination == 'document' if destination is not None
                       else 'text/html' in headers.get('Accept', ''))
+        if destination is None:
+            # Headerless LAN browsers load both the document and its supporting
+            # frames as HTML. Viewer navigation is recorded explicitly instead.
+            try:
+                referrer = urlsplit(headers.get('Referer', ''))
+            except ValueError:
+                referrer = urlsplit('')
+            if ('1' in parse_qs(request.query).get(STANDALONE_QUERY, [])
+                    or '1' in parse_qs(referrer.query).get(STANDALONE_QUERY, [])):
+                navigation = False
         if (self.command == 'GET' and navigation and self.response_status in (200, 304)
                 and not request.path.startswith(PREVIEW_PREFIX)):
             path = Path(self.translate_path(self.path))
@@ -322,6 +336,7 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def send_head(self):
+        self.html_response = False
         request = urlsplit(self.path)
         if request.path.startswith(PREVIEW_PREFIX + 'api/'):
             return self.finder_api(request)
@@ -345,6 +360,34 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 return None
             # Bypass SimpleHTTPRequestHandler's implicit index.html/index.htm lookup.
             return self.list_directory(str(path))
+        if (not request.path.endswith('/') and path.suffix.lower() in HTML_SUFFIXES
+                and path.is_file()):
+            self.html_response = True
+            destination = self.headers.get('Sec-Fetch-Dest')
+            navigation = (destination == 'document' if destination is not None
+                          else 'text/html' in self.headers.get('Accept', ''))
+            if navigation and '1' not in parse_qs(request.query).get(STANDALONE_QUERY, []):
+                try:
+                    with path.open('rb'):
+                        pass
+                except OSError:
+                    self.send_error(404, 'File not found')
+                    return None
+                try:
+                    template = (PREVIEW_ASSETS / 'html-viewer.html').read_text(encoding='utf-8')
+                except OSError:
+                    self.send_error(500, 'HTML preview assets are missing; reinstall docserve')
+                    return None
+                source = request.geturl()
+                standalone = source + ('&' if request.query else '?') + STANDALONE_QUERY + '=1'
+                encoded = template.replace('{{source}}', escape(standalone, quote=True)).encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(encoded)))
+                self.send_header('Cache-Control', 'no-cache')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                return io.BytesIO(encoded)
         if (not request.path.endswith("/") and path.suffix.lower() in MARKDOWN_SUFFIXES
                 and path.is_file()):
             if parse_qs(request.query).get("raw") == ["1"]:
@@ -361,6 +404,69 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 return None
             return self.preview_file(PREVIEW_ASSETS / "viewer.html", "text/html; charset=utf-8")
         return super().send_head()
+
+    def navigation_path(self, url):
+        """Resolve an ordinary served URL, retaining direct-link symlink behavior."""
+        request = urlsplit(url)
+        decoded = unquote(request.path, errors='surrogatepass')
+        parts = PurePosixPath(decoded).parts[1:]
+        if (request.scheme or request.netloc or not decoded.startswith('/')
+                or '..' in parts or '\x00' in decoded or decoded.startswith(PREVIEW_PREFIX)):
+            raise FinderError('Path must be a document URL inside the serving root.')
+        relative = '/'.join(parts)
+        return Path(self.directory).joinpath(*parts), relative
+
+    def navigation_directory(self, url):
+        path, relative = self.navigation_path(url)
+        if not path.is_dir():
+            raise FinderError('Directory was not found.', 404)
+        base = '/' + quote(relative, safe='/', errors='surrogatepass') + ('/' if relative else '')
+        entries = []
+        with os.scandir(path) as children:
+            for child in children:
+                try:
+                    directory = child.is_dir()
+                except OSError:
+                    directory = False
+                entries.append({'name': child.name, 'kind': 'directory' if directory else 'file',
+                                'url': base + quote(child.name, safe='', errors='surrogatepass')
+                                + ('/' if directory else ''), 'symlink': child.is_symlink()})
+        entries.sort(key=lambda entry: (entry['kind'] != 'directory', entry['name'].casefold(), entry['name']))
+        parent = base.rstrip('/').rsplit('/', 1)[0] + '/' if relative else None
+        return {'url': base, 'path': relative, 'parent': parent, 'entries': entries}
+
+    def json_response(self, result, status=200):
+        encoded = json.dumps(result).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(encoded)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        return io.BytesIO(encoded)
+
+    def do_POST(self):
+        """Record reader navigation inside the viewer, excluding supporting frames."""
+        self.html_response = False
+        if urlsplit(self.path).path != PREVIEW_PREFIX + 'api/visit':
+            self.send_error(501, "Unsupported method ('POST')")
+            return
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if (not 0 < length <= 8192 or self.headers.get_content_type() != 'application/json'
+                    or self.headers.get('Sec-Fetch-Site') == 'cross-site'):
+                raise FinderError('Expected a same-origin JSON document visit.')
+            data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict) or not isinstance(data.get('url'), str):
+                raise FinderError('Expected a document URL.')
+            path, relative = self.navigation_path(data['url'])
+            if not (path.is_file() or path.is_dir()):
+                raise FinderError('Visited path was not found.', 404)
+            self.history.record(relative, 'directory' if path.is_dir() else 'file')
+            stream = self.json_response({'recorded': True})
+        except (ValueError, OSError) as error:
+            stream = self.json_response({'error': str(error)}, getattr(error, 'status', 400))
+        self.wfile.write(stream.getvalue())
 
     def finder_api(self, request):
         query = parse_qs(request.query, keep_blank_values=True)
@@ -381,20 +487,15 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 result = self.finder.preview(path, int(value('line', '1')), int(value('column', '0')))
             elif endpoint == 'recent':
                 result = self.history.recent(value('q'), value('kind', 'all'))
+            elif endpoint == 'directory':
+                result = self.navigation_directory(value('url', '/'))
             else:
                 raise FinderError('Unknown finder endpoint.', 404)
             status = 200
         except (ValueError, OSError) as error:
             status = error.status if isinstance(error, FinderError) else 400
             result = {'error': str(error)}
-        encoded = json.dumps(result).encode('utf-8')
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json; charset=utf-8')
-        self.send_header('Content-Length', str(len(encoded)))
-        self.send_header('Cache-Control', 'no-store')
-        self.send_header('X-Content-Type-Options', 'nosniff')
-        self.end_headers()
-        return io.BytesIO(encoded)
+        return self.json_response(result, status)
 
 
 def network_addresses(interface=None):

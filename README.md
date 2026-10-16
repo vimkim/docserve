@@ -73,6 +73,11 @@ Nearby files appear in a directory listing, with clickable **Title**,
 **Created**, and **Modified** headers. Open another document from there without
 returning to the terminal.
 
+HTML and Markdown open with a slim banner. **Directory listing** opens a file
+pane, and **Compact view** switches to floating controls with their own directory
+popup. **Open standalone** opens the document in a separate tab.
+See [document navigation](docs/guide.md#document-navigation).
+
 Use **Find files**, **Find contents**, and **Find directories** to search paths
 or text with a source preview. **Go to root** returns to the serving root.
 **Recently visited** keeps files and directories available across server restarts.

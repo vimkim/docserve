@@ -43,8 +43,9 @@ Sorting works without JavaScript and is recorded in the directory URL:
 `&order=desc` to choose direction; a missing or invalid direction uses that
 column's initial direction. Parent and child directory links retain both
 settings. A bare directory URL starts newest modification first. File links
-retain their normal URLs; browser Back returns to the sorted listing, while
-the Markdown **Directory listing** link opens its parent listing in default order.
+retain their normal URLs; browser Back returns to the sorted listing.
+The document toolbar's **Directory listing** button opens the directory pane;
+**Full directory listing** in that pane opens the normal listing in default order.
 
 Dates use the server's local timezone; hover over a date for its ISO timestamp
 and UTC offset. Directory dates describe the directory itself, not its newest
@@ -124,6 +125,47 @@ addresses. Servers for the same root share the history. It stores paths,
 entry types, and visit times, without file contents. If the cache is
 unavailable, the server keeps recent visits in memory for its current session.
 
+## Document navigation
+
+HTML and Markdown start with a compact banner. **Directory listing** opens a
+pane beside the document. Press the button again, use **×**, or press Escape to
+close it and return to the banner. On narrow screens the pane opens as a drawer.
+
+**Compact view** replaces the banner with floating controls. **Expand banner**
+returns to the banner. The floating controls have their own **Directory listing**
+button, which opens a floating directory popup. Closing that popup returns to
+the floating controls. These switches keep the current document loaded, including
+its scroll position and interactive state. Each newly opened top-level document
+starts with the banner; navigation state is not saved in browser storage.
+
+The pane shows immediate files and subdirectories, with directories first and
+names in alphabetical order. It includes hidden entries and follows the same
+symlink behavior as ordinary direct links. **Filter this directory** filters
+the visible names. Enter a subdirectory or use **Parent directory** to browse
+without leaving the document; the parent button stops at the serving root.
+**Full directory listing** opens the normal sortable page.
+
+**Recently visited** and the existing finder buttons are available in the pane.
+The finder's **Current directory** scope uses the directory displayed in the pane.
+Reading a directory in the pane or previewing a result does not add a visit.
+Opening a document in the HTML viewer does. Selecting a file from the compact
+popup returns to the floating controls; the mobile drawer returns to the banner.
+
+HTML keeps its original styles, scripts, and relative assets in a document frame.
+Relative document links update the address bar, and browser Back and Forward
+follow the opened documents. **Open standalone** opens the current document in
+a separate tab. For HTML, it serves the original file without the surrounding
+viewer; use it for pages that need a full browser window or do not allow framing.
+The reserved query parameter `__docserve_standalone=1` selects this behavior and
+also keeps document frames usable on plain HTTP networks. Ordinary HTML fetches
+and supporting frames still receive the original file. Without JavaScript,
+HTML remains visible with links to its directory and standalone page.
+
+Markdown keeps its existing Raw and theme controls. When reached through an HTML
+document's frame, these remain inside the document, with navigation supplied by
+the surrounding viewer. Opening a Markdown document with
+`?__docserve_standalone=1` retains its original Markdown toolbar.
+
 ## Paths and file selection
 
 | Arguments | Serving directory | Printed links |
@@ -197,7 +239,7 @@ displayed as images. LaTeX equations use KaTeX's supported math syntax; ordinary
 code blocks and inline code remain literal. Invalid diagrams or equations show
 their source and error while the remaining document stays readable.
 
-The toolbar has **Directory listing** and **Raw** links. Add `?raw=1` to a Markdown URL to
+The toolbar has a **Directory listing** button and a **Raw** link. Add `?raw=1` to a Markdown URL to
 read the original source as UTF-8 plain text. Preview requires JavaScript in a
 modern browser. It starts in **light mode**, including when the operating
 system prefers dark. Use the toolbar's **Dark mode** toggle to switch either
@@ -332,7 +374,9 @@ SVG image from a second local HTTP origin, Mermaid, LaTeX math, heading IDs,
 sanitization, errors within individual blocks, light and dark mobile layouts,
 saved themes, denied storage, early theme selection during slow loading,
 rapid toggles during Mermaid loading, directory sorting without JavaScript,
-and existing HTML behavior. Network requests outside localhost are blocked in
+and HTML navigation with original scripts, relative links and assets, standalone
+viewing, browser Back/Forward, headerless plain HTTP, directory panes, compact
+directory popups, mobile focus, and shared Markdown controls. Network requests outside localhost are blocked in
 the main rendering scenario, and a plain document verifies lazy loading:
 
 ```sh

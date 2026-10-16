@@ -15,6 +15,7 @@ const require = createRequire(path.join(root, "tools/serve-html-assets/package.j
 const { chromium } = require("playwright");
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60"><rect width="160" height="60" fill="#0969da"/><text x="15" y="35" fill="white">External SVG</text></svg>';
 const filename = "한글 review #1's ?.MD";
+const htmlFilename = 'review # 한?.HTML';
 let directory, cacheDirectory, server, images, browser, baseURL;
 let serverOutput = "";
 
@@ -54,6 +55,15 @@ before(async () => {
   await writeFile(path.join(directory, "existing.html"), "<!doctype html><title>Existing HTML</title><h1>Original page</h1>");
   await writeFile(path.join(directory, "index.html"), "<!doctype html><title>Selected index</title><h1>Root index page</h1>");
   await writeFile(path.join(directory, "nested/index.htm"), "<!doctype html><title>Selected nested index</title><h1>Nested index page</h1>");
+  await mkdir(path.join(directory, 'navigation/empty'), { recursive: true });
+  await writeFile(path.join(directory, 'navigation/style.css'), 'body { background: rgb(17, 24, 39); color: white; }');
+  await writeFile(path.join(directory, 'navigation/helper.html'), '<title>Supporting frame</title><p>Supporting content</p>');
+  await writeFile(path.join(directory, 'navigation', htmlFilename), `<!doctype html><meta charset="utf-8"><title>Interactive HTML</title>
+    <link rel="stylesheet" href="style.css"><h1>Interactive document</h1>
+    <button id="counter">Count: 0</button><script>let count = 0; document.getElementById('counter').onclick = event => { event.target.textContent = 'Count: ' + ++count; };</script>
+    <a href="second.htm?keep=%20&amp;other=%2B#target">Next HTML</a>
+    <a href="../plain.md">Read Markdown</a><iframe src="helper.html" hidden></iframe>`);
+  await writeFile(path.join(directory, 'navigation/second.htm'), '<title>Second HTML</title><h1 id="target">Second document</h1><a href="' + encodeURIComponent(htmlFilename) + '">First HTML</a>');
   await mkdir(path.join(directory, "ordering/subdir"), { recursive: true });
   for (const [index, name] of ["Alpha.md", "report10.md", "report2.md", "zebra.md"].entries()) {
     const file = path.join(directory, "ordering", name);
@@ -133,14 +143,14 @@ test("directories show listings until an index page is clicked", async () => {
     await page.getByRole("link", { name: "index.html", exact: true }).click();
     await page.waitForLoadState('domcontentloaded');
     assert.equal(await page.title(), "Selected index");
-    assert.equal(await page.locator("h1").innerText(), "Root index page");
+    assert.equal(await page.frameLocator('#document-frame').locator("h1").innerText(), "Root index page");
     await page.goto(baseURL + "nested");
     assert.equal(new URL(page.url()).pathname, "/nested/");
     assert.equal(await page.getByRole("heading").innerText(), "Directory listing for /nested/");
     await page.getByRole("link", { name: "index.htm", exact: true }).click();
     await page.waitForLoadState('domcontentloaded');
     assert.equal(await page.title(), "Selected nested index");
-    assert.equal(await page.locator("h1").innerText(), "Nested index page");
+    assert.equal(await page.frameLocator('#document-frame').locator("h1").innerText(), "Nested index page");
   } finally {
     await page.close();
   }
@@ -170,7 +180,8 @@ test("finder previews fuzzy file paths and navigates directories with the keyboa
     assert.equal(page.url(), baseURL);
     await page.getByRole('link', { name: 'plain.md', exact: true }).click();
     await ready(page);
-    await page.getByRole('link', { name: 'Directory listing', exact: true }).click();
+    await page.getByRole('button', { name: 'Directory listing', exact: true }).click();
+    await page.getByRole('link', { name: 'Full directory listing', exact: true }).click();
     assert.equal(page.url(), baseURL);
   } finally { await page.close(); }
 });
@@ -257,7 +268,8 @@ test('recent visits filter files and directories, reopen paths and fit a narrow 
     await page.goto(baseURL + 'search-examples/');
     await page.getByRole('link', { name: 'guide.md', exact: true }).click();
     await ready(page);
-    await page.getByRole('link', { name: 'Directory listing', exact: true }).click();
+    await page.getByRole('button', { name: 'Directory listing', exact: true }).click();
+    await page.getByRole('link', { name: 'Full directory listing', exact: true }).click();
     await page.getByRole('link', { name: 'Go to root', exact: true }).click();
     await page.getByRole('button', { name: 'Recently visited', exact: true }).click();
     await page.getByRole('searchbox', { name: 'Search query' }).fill('search-examples');
@@ -579,13 +591,223 @@ test("a failed theme script leaves a light preview and hides the inactive toggle
   } finally { await page.close(); }
 });
 
-test("existing HTML is still served unchanged", async () => {
+test("HTML documents keep their original content inside the navigation viewer", async () => {
   const page = await browser.newPage();
   try {
     await page.goto(baseURL + "existing.html");
     assert.equal(await page.title(), "Existing HTML");
-    assert.equal(await page.locator("h1").innerText(), "Original page");
+    assert.equal(await page.frameLocator('#document-frame').locator("h1").innerText(), "Original page");
   } finally {
     await page.close();
   }
+});
+
+test('HTML navigation supports A/B, A/C and C/C-prime without reloading the document', { timeout: 30000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  page.setDefaultTimeout(5000);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const child = page.frameLocator('#document-frame');
+  const view = async expected => assert.equal(await page.locator('body').getAttribute('data-document-view'), expected);
+  try {
+    const url = baseURL + 'navigation/' + encodeURIComponent(htmlFilename);
+    await page.goto(url);
+    await child.getByRole('heading', { name: 'Interactive document' }).waitFor();
+    await view('banner');
+    assert.equal(await child.locator('body').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(17, 24, 39)');
+    await child.locator('#counter').click();
+    const width = (await page.locator('#document-frame').boundingBox()).width;
+    await page.locator('#directory-toggle').click();
+    await page.locator('#directory-entries a[aria-current="page"]').waitFor();
+    await view('directory');
+    assert.equal(width - (await page.locator('#document-frame').boundingBox()).width, 272);
+    const paneBounds = await page.locator('#document-directory').boundingBox();
+    assert.ok(Math.abs(paneBounds.y + paneBounds.height - page.viewportSize().height) < 1, 'The directory pane fills the available height');
+    await page.locator('#directory-filter').fill(htmlFilename);
+    assert.equal(await page.locator('#directory-entries a').count(), 1);
+    await page.locator('#directory-toggle').click();
+    await view('banner');
+    await page.locator('#compact-view').click();
+    await view('compact');
+    await page.locator('#expand-banner').click();
+    await view('banner');
+    await page.locator('#compact-view').click();
+    await page.locator('#compact-directory-toggle').click();
+    await view('compact-directory');
+    assert.equal(await page.locator('#document-banner').isVisible(), false);
+    assert.equal((await page.locator('#document-frame').boundingBox()).width, width);
+    await page.locator('#compact-directory-toggle').click();
+    await view('compact');
+    await page.locator('#compact-directory-toggle').click();
+    await page.locator('#close-directory').click();
+    await view('compact');
+    assert.equal(await page.locator('#compact-directory-toggle').evaluate(node => node === document.activeElement), true);
+    await page.locator('#compact-directory-toggle').click();
+    await page.locator('#directory-filter').press('Escape');
+    await view('compact');
+    assert.equal(await child.locator('#counter').innerText(), 'Count: 1');
+    assert.equal(page.url(), url);
+    const popupPromise = page.waitForEvent('popup');
+    await page.locator('#compact-standalone').click();
+    const popup = await popupPromise;
+    await popup.waitForLoadState();
+    assert.equal(await popup.locator('#document-banner').count(), 0);
+    assert.equal(await popup.getByRole('heading').innerText(), 'Interactive document');
+    assert.equal(new URL(popup.url()).searchParams.get('__docserve_standalone'), '1');
+    await popup.close();
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('HTML relative navigation updates URLs, Back, Forward and recent visits without nested viewers', { timeout: 30000 }, async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const child = page.frameLocator('#document-frame');
+  try {
+    const first = baseURL + 'navigation/' + encodeURIComponent(htmlFilename);
+    await page.goto(first);
+    await child.getByRole('heading', { name: 'Interactive document' }).waitFor();
+    await child.getByRole('link', { name: 'Next HTML', exact: true }).click();
+    await child.getByRole('heading', { name: 'Second document' }).waitFor();
+    await page.waitForURL(baseURL + 'navigation/second.htm?keep=%20&other=%2B#target');
+    assert.equal(await child.locator('#document-frame').count(), 0);
+    await page.goBack();
+    await child.getByRole('heading', { name: 'Interactive document' }).waitFor();
+    await page.waitForURL(first);
+    await page.goForward();
+    await child.getByRole('heading', { name: 'Second document' }).waitFor();
+    await page.waitForURL(baseURL + 'navigation/second.htm?keep=%20&other=%2B#target');
+    await page.reload();
+    await child.getByRole('heading', { name: 'Second document' }).waitFor();
+    await page.waitForFunction(async () => {
+      const data = await (await fetch('/__serve_html__/api/recent')).json();
+      return data.results.some(entry => entry.path === 'navigation/second.htm');
+    });
+    const history = await (await page.request.get(baseURL + '__serve_html__/api/recent')).json();
+    assert.equal(history.results.some(entry => entry.path === 'navigation/helper.html'), false);
+    await child.getByRole('link', { name: 'First HTML', exact: true }).click();
+    await child.getByRole('link', { name: 'Read Markdown', exact: true }).click();
+    await child.locator('#content[aria-busy="false"]').waitFor();
+    await page.waitForURL(baseURL + 'plain.md');
+    assert.equal(await child.locator('#document-banner').count(), 0);
+    assert.equal(await child.getByRole('button', { name: 'Dark mode', exact: true }).isVisible(), true);
+  } finally { await page.close(); }
+});
+
+test('HTML links avoid nested viewers when Fetch Metadata headers are absent on plain HTTP', { timeout: 30000 }, async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  try {
+    await page.route(/\/navigation\/[^/]+\.html?(?:\?|$)/i, async route => {
+      const headers = await route.request().allHeaders();
+      for (const name of Object.keys(headers)) if (name.startsWith('sec-fetch-')) delete headers[name];
+      await route.fulfill({ response: await route.fetch({ headers }) });
+    });
+    await page.goto(baseURL + 'navigation/' + encodeURIComponent(htmlFilename));
+    const child = page.frameLocator('#document-frame');
+    await child.getByRole('heading', { name: 'Interactive document' }).waitFor();
+    assert.equal(await child.frameLocator('iframe').locator('p').textContent(), 'Supporting content');
+    assert.equal(await child.frameLocator('iframe').locator('#document-banner').count(), 0);
+    const recent = await (await page.request.get(baseURL + '__serve_html__/api/recent')).json();
+    assert.equal(recent.results.some(entry => entry.path === 'navigation/helper.html'), false);
+    await child.getByRole('link', { name: 'Next HTML', exact: true }).click();
+    await child.getByRole('heading', { name: 'Second document' }).waitFor();
+    await page.waitForURL(baseURL + 'navigation/second.htm?keep=%20&other=%2B#target');
+    assert.equal(await child.locator('#document-frame').count(), 0);
+    await child.getByRole('link', { name: 'First HTML', exact: true }).click();
+    await child.getByRole('heading', { name: 'Interactive document' }).waitFor();
+    assert.equal(await child.locator('#document-frame').count(), 0);
+    assert.equal(await child.frameLocator('iframe').locator('p').textContent(), 'Supporting content');
+  } finally { await page.unrouteAll({ behavior: 'wait' }); await page.close(); }
+});
+
+test('Markdown shares directory and compact states and keeps rendering, theme and finder controls', { timeout: 30000 }, async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  try {
+    await page.goto(baseURL + 'nested/' + encodeURIComponent(filename));
+    await ready(page);
+    const heading = await page.locator('#content h1').elementHandle();
+    await page.locator('#directory-toggle').click();
+    await page.locator('#directory-entries a[aria-current="page"]').waitFor();
+    const initialURL = page.url();
+    await page.locator('#directory-entries').getByRole('link', { name: 'figures/', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('#directory-path').textContent === '/nested/figures');
+    assert.equal(page.url(), initialURL);
+    await page.locator('#directory-up').click();
+    await page.waitForFunction(() => document.querySelector('#directory-path').textContent === '/nested');
+    await page.getByRole('button', { name: 'Find contents', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Search scope' }).selectOption('current');
+    await page.getByRole('searchbox', { name: 'Search query' }).fill('Needle.literal');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '0 results.');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#document-directory').isVisible(), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#document-directory').isVisible(), false);
+    await page.locator('#compact-view').click();
+    await page.locator('#compact-directory-toggle').click();
+    await page.locator('#close-directory').click();
+    assert.equal(await page.locator('body').getAttribute('data-document-view'), 'compact');
+    await page.locator('#expand-banner').click();
+    await page.getByRole('button', { name: 'Dark mode', exact: true }).click();
+    await diagramsReady(page);
+    assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
+    assert.equal(await heading.evaluate(node => node.isConnected), true);
+    assert.equal(await page.locator('.diagram svg').count(), 2);
+    assert.equal(await page.locator('.katex').count(), 2);
+    assert.equal(page.url(), initialURL);
+  } finally { await page.close(); }
+});
+
+test('directory drawers and compact popups fit mobile screens and return to their own layout', { timeout: 30000 }, async () => {
+  for (const width of [390, 320]) {
+    const page = await browser.newPage({ viewport: { width, height: 844 } });
+    page.setDefaultTimeout(5000);
+    try {
+      await page.goto(baseURL + 'navigation/' + encodeURIComponent(htmlFilename));
+      await page.frameLocator('#document-frame').getByRole('heading', { name: 'Interactive document' }).waitFor();
+      await page.locator('#directory-toggle').click();
+      await page.locator('#directory-entries a[aria-current="page"]').waitFor();
+      assert.equal(await page.locator('#document-reader').evaluate(node => node.inert), true);
+      assert.equal(await page.locator('#directory-backdrop').isVisible(), true);
+      await page.locator('#close-directory').focus();
+      await page.keyboard.press('Shift+Tab');
+      assert.equal(await page.locator('#document-directory').evaluate(node => node.contains(document.activeElement)), true);
+      await page.keyboard.press('Escape');
+      assert.equal(await page.locator('body').getAttribute('data-document-view'), 'banner');
+      await page.locator('#compact-view').click();
+      await page.locator('#compact-directory-toggle').click();
+      await page.locator('#directory-entries').getByRole('link', { name: 'second.htm', exact: true }).click();
+      await page.frameLocator('#document-frame').getByRole('heading', { name: 'Second document' }).waitFor();
+      assert.equal(await page.locator('body').getAttribute('data-document-view'), 'compact');
+      assert.equal(await page.locator('#document-reader').evaluate(node => node.inert), false);
+      await page.locator('#compact-directory-toggle').click();
+      await page.locator('#close-directory').click();
+      assert.equal(await page.locator('body').getAttribute('data-document-view'), 'compact');
+      await page.locator('#expand-banner').click();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    } finally { await page.close(); }
+  }
+});
+
+test('HTML remains readable without JavaScript and directory API failures can be dismissed', { timeout: 30000 }, async () => {
+  const noJS = await browser.newPage({ javaScriptEnabled: false });
+  try {
+    await noJS.goto(baseURL + 'navigation/' + encodeURIComponent(htmlFilename));
+    assert.equal(await noJS.frameLocator('#document-frame').getByRole('heading').innerText(), 'Interactive document');
+    await noJS.getByRole('link', { name: 'Directory listing', exact: true }).click();
+    assert.equal(new URL(noJS.url()).pathname, '/navigation/');
+  } finally { await noJS.close(); }
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  try {
+    await page.route('**/__serve_html__/api/directory?*', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Directory unavailable"}' }));
+    await page.goto(baseURL + 'plain.md');
+    await ready(page);
+    await page.locator('#directory-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#directory-status').textContent.includes('Directory unavailable'));
+    await page.locator('#close-directory').click();
+    assert.equal(await page.locator('body').getAttribute('data-document-view'), 'banner');
+    assert.equal(await page.locator('#content h1').innerText(), 'Plain document');
+  } finally { await page.close(); }
 });

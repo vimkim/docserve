@@ -74,6 +74,11 @@ Selected path:
 파일 목록에서는 **Title**, **Created**, **Modified** 헤더를 눌러 정렬할 수 있습니다.
 터미널로 돌아가지 않고 다른 문서도 이어서 열어 보세요.
 
+HTML과 Markdown을 열면 상단에 작은 배너가 표시됩니다. **Directory listing**으로
+파일 탐색 창을 열고, **Compact view**로 플로팅 컨트롤로 전환할 수 있습니다.
+플로팅 컨트롤에서도 별도의 디렉터리 팝업을 열 수 있으며, **Open standalone**은
+문서를 새 탭에서 엽니다. 자세한 내용은 [문서 탐색 안내](docs/guide.md#document-navigation)를 참고하세요.
+
 **Find files**, **Find contents**, **Find directories**에서 경로나 본문을 검색하고 소스를 미리 볼 수 있습니다.
 **Go to root**는 서빙 루트로 이동합니다. **Recently visited**는 최근 연 파일과 디렉터리를 서버 재시작 후에도 보여 줍니다.
 자세한 동작은 [검색과 최근 방문 안내](docs/guide.md#finding-and-revisiting-paths)를 참고하세요.
