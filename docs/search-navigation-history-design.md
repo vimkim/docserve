@@ -87,9 +87,9 @@ Commit task changes before requesting the approved local merge workflow.
 
 ## Verification result
 
-Code revision: `8bdb14b`. Local integration awaits approval.
+Code revision after rebase: `719137a`. The user approved local integration on 2026-10-16.
 
-- `just test`: 47 Python tests passed.
+- `just test`: 48 Python tests passed after integration with the newer main changes.
 - `just browser-test`: 16 headless-browser tests passed.
 - `just build`: wheel and source distribution passed.
 - Installed wheel: 13 finder/history HTTP tests and three finder browser scenarios passed.
@@ -104,7 +104,7 @@ Tests use isolated caches and temporary environments. The installed editable com
 
 The initial review found three issues: Git-internal symlink aliases, truncated UTF-8 previews, and unusual Linux filenames.
 A follow-up found one issue with unsaved visits after cache write failures.
-Regression tests cover all four findings. Commits `e359879` and `34eb5b8` resolve them.
+Regression tests cover all four findings. Commits `3f2f1a7` and `5b216e1` resolve them.
 The final response-header adjustment also passed review.
 
 Final result: no remaining material Standards or correctness findings.
@@ -112,7 +112,7 @@ Final result: no remaining material Standards or correctness findings.
 ## Spec
 
 The initial review found three issues: ignore-source priority, Git-internal symlink aliases, and preview line numbering.
-Commit `e359879` resolves all three. The reviewer reran each reproduction successfully.
+Commit `3f2f1a7` resolves all three. The reviewer reran each reproduction successfully.
 
 Final result: no remaining Spec findings or additional scope creep.
 
@@ -120,10 +120,11 @@ Review totals: Standards, zero open findings. Spec, zero open findings. Neither 
 
 ## Integration state
 
-The primary checkout advanced to `7f9ff88` during this work.
-That commit reorganizes the English and Korean documentation.
-Preserve that documentation during the approved rebase. Place detailed finder documentation in the command reference after integration.
-Later main commits rename the command to docserve with CLI aliases and add request paths to HTTP error logs.
-Preserve those changes during integration as well.
+The user approved rebasing onto current local main, merging, and installation sync on 2026-10-16.
+The rebase uses main revision `7b86043`.
+It preserves the docserve name, all three CLI aliases, security notices, and request-path error logs.
+Detailed finder documentation now belongs in the command reference. Both README overviews introduce the new controls.
 
-The task checkout is separate from the primary checkout. No local merge, installation sync, or source push occurred.
+After the local fast-forward merge, run `just sync` from the primary checkout.
+Verify the installed commands and live finder behavior. Remove only this task's worktree and branch.
+Source pushes require separate authorization.

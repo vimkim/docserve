@@ -1,6 +1,6 @@
-# html-serve
+# docserve
 
-html-serve lets a reader browse a served directory tree and open its documents.
+docserve lets a reader browse a served directory tree and open its documents.
 
 ## Language
 
