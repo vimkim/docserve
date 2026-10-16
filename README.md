@@ -83,6 +83,7 @@ or text with rendered Markdown and HTML previews. **Go to root** returns to the 
 **Recently visited** keeps files and directories available across server restarts.
 **Recently updated** finds changed documents recursively, newest first, with an
 editable filename filter that starts with `.html` and `.md` files.
+It uses `fd` (or `find`) to scan large trees.
 See [finding and revisiting paths](docs/guide.md#finding-and-revisiting-paths).
 Run `docserve-recent .` for the same Recently updated search in your
 terminal, or add `--json` for scripts. See the [command reference](docs/guide.md#recently-updated-files-from-the-terminal).

@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime
 import json
 import math
+import os
 from pathlib import Path
 import sys
 
@@ -44,7 +45,7 @@ def main(argv=None):
     parser.add_argument('--timeout', type=scan_timeout, default=UPDATED_SECONDS, metavar='SECONDS',
                         help=f'whole-scan deadline (default: {UPDATED_SECONDS} seconds)')
     parser.add_argument('--json', action='store_true', help='emit root, results, truncated, and scan_complete as JSON')
-    parser.epilog = ('Uses fd when available, with a Python fallback. '
+    parser.epilog = ('Uses fd (or fdfind), with find as a fallback. '
                      'Exit codes: 0 complete scan, 1 error, 2 usage error, 3 scan timeout.')
     args = parser.parse_args(argv)
     try:
@@ -61,11 +62,12 @@ def main(argv=None):
     if args.json:
         print(json.dumps({'root': str(root), **result}))
     else:
+        root_name = str(root)
         for entry in result['results']:
             modified = entry['modified_at']
             timestamp = (datetime.fromisoformat(modified).astimezone().strftime('%Y-%m-%d %H:%M')
                          if modified else 'Unavailable')
-            name = str(root / entry['path'])
+            name = os.path.join(root_name, entry['path'])
             name = name.replace('\\', '\\\\').replace('\n', r'\n').replace('\r', r'\r').replace('\t', r'\t')
             print(f'{timestamp}  {name}')
     if not result['scan_complete']:

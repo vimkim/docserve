@@ -81,8 +81,8 @@ or **Open directory** to navigate. Escape closes the finder and returns focus
 to its button. The preview appears below the results on narrow screens.
 
 Search covers the serving root by default. Select **Current directory** to
-search the current directory and its descendants. Search reads `.gitignore`,
-`.ignore`, and `.rgignore` files within the serving root. Hidden and ignored
+search the current directory and its descendants. File, directory, and content
+search read `.gitignore`, `.ignore`, and `.rgignore` files within the serving root. Hidden and ignored
 entries stay out of results unless **Include hidden and ignored** is selected.
 Git's `.git` internals always stay excluded. These filters do not change the
 ordinary directory listing. Empty directories are searchable.
@@ -115,20 +115,31 @@ regardless of visit history. It starts at the serving root, with
 files, including uppercase extensions. Clear that field to include all file
 types, or edit it and **Exclude filenames (regex)** to choose other filenames.
 Type a fuzzy path query to narrow the results while keeping modification order.
-Equal modification times sort alphabetically. Results show modification times
-and use the same preview and open controls as file search.
+Equal modification times sort by descending path bytes, as in `recent-docs.sh`.
+Results show modification times and use the same preview and open controls as file search.
 While a search is running, the finder shows an animated progress indicator and
 elapsed time. Recently updated also explains that it is scanning files and
 checking modification times. The indicator does not estimate a percentage.
-**Current directory** includes its descendants, and the hidden, ignored, and
-symlink rules above also apply. The default `.html`/`.md` filter and an empty
-filter work without `rg`. Other filename regexes require `rg`.
+**Current directory** includes its descendants. Recently updated follows
+`recent-docs.sh` filtering rules: it uses `fd`'s native `.gitignore`, `.ignore`,
+and `.fdignore` handling, including ancestor and global ignore files.
+It does not read `.rgignore`. Hidden and ignored entries stay excluded unless
+**Include hidden and ignored** is selected. `node_modules`, Git internals,
+and all symlinks stay excluded even with that option.
+The default `.html`/`.md` filter and an empty filter work without `rg`.
+Other filename regexes require `rg`.
 
 Recently updated scans the complete scope before selecting the newest 200 files.
-It uses `fd` or `fdfind` when available, with up to eight worker threads.
-Otherwise, it uses Python. Both methods apply the same serving-root ignore rules.
-Install `fd` for faster scans of large directory trees.
-Unreadable paths and files that disappear during the scan are skipped.
+It uses `fd` or `fdfind` for native parallel scanning and ignore filtering.
+Otherwise, it requires `find` and reads ancestor and nested `.gitignore`,
+`.ignore`, and `.fdignore` files. As in `recent-docs.sh`, this fallback does not
+read Git configuration, `.git/info/exclude`, or fd's global ignore file.
+Extended brace globs and POSIX named character classes require `fd`.
+Install `fd` for faster scans of large trees and full native ignore support.
+The default extension filter follows the selected scanner; fd skips filenames
+with non-UTF-8 bytes, while find can include them.
+Files that disappear or cannot be read during metadata checks are skipped.
+Scanner failures produce an error.
 The scan has a 30-second deadline and no entry-count limit.
 If the deadline expires, the finder shows a timeout message without a partial
 ranking. A completed scan with more than 200 matches shows the newest matches.
@@ -178,9 +189,10 @@ docserve-recent . --filename '' --include
 
 The optional directory defaults to the current directory. The command searches
 that directory, without selecting its Git repository root. It uses the finder's
-ignore, symlink, filename filter, fuzzy query, and modification order rules.
-`--include` includes hidden and ignored entries. The default filename filter
-selects `.html` and `.md` files. The default filter works without external tools.
+Recently updated filtering and modification order rules.
+`--include` includes hidden and ignored entries while still excluding
+`node_modules`, Git internals, and symlinks. The default filename filter
+selects `.html` and `.md` files. Scanning requires `fd`, `fdfind`, or `find`.
 Other filename regexes require `rg`.
 
 Text output shows local modification times and absolute paths, one file per line.

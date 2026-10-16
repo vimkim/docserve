@@ -98,16 +98,19 @@ def path_matcher(pattern):
 
 
 class IgnoreRules:
+    sources = ('.gitignore', '.ignore', '.rgignore')
+    read_limit = PREVIEW_BYTES
+
     def __init__(self, rules=()):
         self.rules = list(rules)
 
     def beneath(self, directory, relative):
         rules = list(self.rules)
         # Later sources take precedence, as in ripgrep.
-        for priority, name in enumerate(('.gitignore', '.ignore', '.rgignore')):
+        for priority, name in enumerate(self.sources):
             try:
-                with open(os.path.join(directory, name), encoding='utf-8', errors='replace') as stream:
-                    lines = stream.read(PREVIEW_BYTES).splitlines()
+                with open(os.path.join(directory, name), encoding='utf-8', errors='surrogateescape') as stream:
+                    lines = stream.read(self.read_limit).splitlines()
             except OSError:
                 continue
             for line in lines:
@@ -127,10 +130,13 @@ class IgnoreRules:
                 anchored = line.startswith('/') or '/' in line
                 line = line.removeprefix('/')
                 if line:
-                    matcher = path_matcher(line) if anchored else segment_matcher(line)
+                    matcher = self.matcher(line, anchored)
                     rules.append((priority, relative, matcher, anchored, directory_only, negate))
         rules.sort(key=lambda rule: rule[0])
-        return IgnoreRules(rules)
+        return type(self)(rules)
+
+    def matcher(self, pattern, anchored):
+        return path_matcher(pattern) if anchored else segment_matcher(pattern)
 
     def excludes(self, relative, directory):
         basename = relative.rsplit('/', 1)[-1]
@@ -141,6 +147,47 @@ class IgnoreRules:
             if matcher(local if anchored else basename):
                 return not negate
         return False
+
+
+class FindIgnoreRules(IgnoreRules):
+    """The recent-docs.sh find fallback's ignore sources and supported globs."""
+
+    sources = ('.gitignore', '.ignore', '.fdignore')
+    read_limit = -1
+
+    def matcher(self, pattern, anchored):
+        if re.search(r'(?<!\\)(?:\[\[:[a-z]+:\]\]|[{}])', pattern):
+            raise FinderError('Extended ignore patterns require fd. Install fd on the server.', 503)
+        # Git/fd also accept ^ for a negated bracket class.
+        pattern = re.sub(r'(?<!\\)\[\^', '[!', pattern)
+        return super().matcher(pattern, anchored)
+
+
+class FindIgnores:
+    def __init__(self, start, deadline):
+        self.start = os.fspath(start)
+        self.deadline = deadline
+        self.contexts = {}
+
+    def allows(self, path):
+        directory = os.path.dirname(path)
+        pending = []
+        while directory not in self.contexts:
+            pending.append(directory)
+            parent = os.path.dirname(directory)
+            if parent == directory:
+                self.contexts[directory] = (FindIgnoreRules(), False)
+                break
+            directory = parent
+        for directory in reversed(pending):
+            if time.monotonic() >= self.deadline:
+                raise ScanTimeout()
+            rules, blocked = self.contexts[os.path.dirname(directory)]
+            base = directory.lstrip('/')
+            blocked = False if directory == self.start else blocked or rules.excludes(base, True)
+            self.contexts[directory] = (rules.beneath(directory, base), blocked)
+        rules, blocked = self.contexts[os.path.dirname(path)]
+        return not blocked and not rules.excludes(path.lstrip('/'), False)
 
 
 def fuzzy_rank(query, path):
@@ -278,7 +325,7 @@ class Finder:
                 'truncated': truncated or len(matches) > RESULT_LIMIT}
 
     def updated_entries(self, scope, include, filename, deadline):
-        """Enumerate the complete scope, with fd acceleration and a Python fallback."""
+        """Let fd scan with recent-docs.sh rules; use find when fd is unavailable."""
         start = self.resolve(scope, directory=True)
         try:
             with os.scandir(start):
@@ -286,109 +333,76 @@ class Finder:
         except OSError as error:
             raise FinderError('Search directory is unreadable.', 403) from error
         relative = start.relative_to(self.root).as_posix()
-        relative = '' if relative == '.' else relative
+        search_path = './' + relative if relative != '.' else '.'
         root_name = os.fspath(self.root)
-        inherited = IgnoreRules()
-        ancestor = self.root
-        for part in start.relative_to(self.root).parts:
-            base = '' if ancestor == self.root else ancestor.relative_to(self.root).as_posix()
-            inherited = inherited.beneath(ancestor, base)
-            ancestor /= part
-        contexts = {relative: (inherited.beneath(start, relative), False)}
-
-        def context(base):
-            pending = []
-            while base not in contexts:
-                pending.append(base)
-                if not base:
-                    contexts[base] = (IgnoreRules(), False)
-                    break
-                base = base.rpartition('/')[0]
-            for base in reversed(pending):
-                parent = base.rpartition('/')[0]
-                rules, blocked = contexts[parent]
-                blocked = blocked or (bool(base) and rules.excludes(base, True))
-                contexts[base] = (rules.beneath(os.path.join(root_name, base), base) if not blocked else rules, blocked)
-            return contexts[base]
-
         executable = shutil.which('fd') or shutil.which('fdfind')
+        ignores = None
         if executable:
-            # Apply docserve's serving-root ignore rules below, including .rgignore.
-            # fd-specific and global ignore files must not change the candidate set.
-            command = [executable, '--no-ignore', '--type', 'f', '--type', 'l',
-                       '--exclude', '.git', '--print0', '--color', 'never',
-                       '--threads', str(min(8, os.cpu_count() or 1))]
+            command = [executable, '--no-require-git', '--type', 'f',
+                       '--exclude', 'node_modules', '--exclude', '.git',
+                       '--print0', '--color', 'never']
             if include:
-                command.append('--hidden')
+                command.extend(['--hidden', '--no-ignore'])
             if filename == UPDATED_FILENAME:
-                # fd's --extension option drops names with non-UTF-8 bytes.
-                # Its basename regex preserves those filesystem names.
-                command.append('--ignore-case')
-            command.extend(['--', UPDATED_FILENAME if filename == UPDATED_FILENAME else '',
-                            './' + relative if relative else '.'])
-            with tempfile.TemporaryFile() as paths, tempfile.TemporaryFile() as errors:
+                command.extend(['--ignore-case', '--extension', 'html', '--extension', 'md'])
+            command.extend(['--', '.', search_path])
+        else:
+            executable = shutil.which('find')
+            if not executable:
+                raise FinderError('Recently updated requires fd or find. Install fd for faster scans.', 503)
+            command = [executable, '-H', search_path, '-mindepth', '1',
+                       '(', '-type', 'd', '(', '-name', 'node_modules', '-o', '-name', '.git']
+            if not include:
+                command.extend(['-o', '-name', '.*'])
+            command.extend([')', '-prune', ')', '-o', '(', '-type', 'f'])
+            if not include:
+                command.extend(['!', '-name', '.*'])
+                ignores = FindIgnores(start, deadline)
+            if filename == UPDATED_FILENAME:
+                command.extend(['(', '-iname', '*.html', '-o', '-iname', '*.md', ')'])
+            command.extend(['-print0', ')'])
+        if time.monotonic() >= deadline:
+            raise ScanTimeout()
+        with tempfile.TemporaryFile() as errors:
+            try:
+                process = subprocess.Popen(command, cwd=self.root, stdin=subprocess.DEVNULL,
+                                           stdout=subprocess.PIPE, stderr=errors)
+            except OSError as error:
+                raise FinderError('Could not start the recent-file scanner.', 503) from error
+            try:
+                pending = b''
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    while selector.get_map():
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not selector.select(remaining):
+                            raise ScanTimeout()
+                        chunk = os.read(process.stdout.fileno(), 65536)
+                        if not chunk:
+                            selector.unregister(process.stdout)
+                            continue
+                        records = (pending + chunk).split(b'\0')
+                        pending = records.pop()
+                        for record in records:
+                            if time.monotonic() >= deadline:
+                                raise ScanTimeout()
+                            path = os.fsdecode(record).removeprefix('./')
+                            source = os.path.join(root_name, path)
+                            if ignores is None or ignores.allows(source):
+                                yield TreeEntry(path, False, source)
                 try:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise ScanTimeout()
-                    result = subprocess.run(command, cwd=self.root, stdin=subprocess.DEVNULL,
-                                            stdout=paths, stderr=errors, timeout=remaining)
+                    code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired as error:
                     raise ScanTimeout() from error
-                except OSError as error:
-                    raise FinderError('Could not start the recent-file scanner.', 503) from error
-                if result.returncode:
+                if code:
                     errors.seek(0)
                     detail = errors.read(4096).decode('utf-8', errors='replace').strip()
-                    raise FinderError(f'Recent-file scanner failed: {detail or result.returncode}', 503)
-                paths.seek(0)
-                pending = b''
-                while chunk := paths.read(65536):
-                    records = (pending + chunk).split(b'\0')
-                    pending = records.pop()
-                    for record in records:
-                        if time.monotonic() >= deadline:
-                            raise ScanTimeout()
-                        path = os.fsdecode(record).removeprefix('./')
-                        if not relative and path.split('/', 1)[0] == '__serve_html__':
-                            continue
-                        if not include:
-                            rules, blocked = context(path.rpartition('/')[0])
-                            if blocked or rules.excludes(path, False):
-                                continue
-                        yield TreeEntry(path, False, os.path.join(root_name, path))
-            return
-
-        # No subprocess dependency is needed for default document filtering.
-        stack = [(os.fspath(start), relative, inherited)]
-        while stack:
-            directory, base, inherited = stack.pop()
-            rules = inherited if include else inherited.beneath(directory, base)
-            try:
-                with os.scandir(directory) as children:
-                    for child in children:
-                        if time.monotonic() >= deadline:
-                            raise ScanTimeout()
-                        if child.name == '.git' or (not base and child.name == '__serve_html__'):
-                            continue
-                        if not include and child.name.startswith('.'):
-                            continue
-                        try:
-                            is_directory = child.is_dir(follow_symlinks=False)
-                        except OSError:
-                            continue
-                        if (not is_directory and filename == UPDATED_FILENAME
-                                and not child.name.lower().endswith(('.html', '.md'))):
-                            continue
-                        path = base + '/' + child.name if base else child.name
-                        if not include and rules.excludes(path, is_directory):
-                            continue
-                        if is_directory:
-                            stack.append((child.path, path, rules))
-                        else:
-                            yield TreeEntry(path, False, child)
-            except OSError:
-                continue
+                    raise FinderError(f'Recent-file scanner failed: {detail or code}', 503)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+                process.stdout.close()
 
     def updated(self, query, scope, include, filename, exclude_filename, limit, timeout):
         """Select globally newest files after a complete scan, using bounded result memory."""
@@ -411,18 +425,16 @@ class Finder:
                 for entry in batch:
                     if time.monotonic() >= deadline:
                         raise ScanTimeout()
-                    if fuzzy_rank(query, entry.path) is None:
+                    if query and fuzzy_rank(query, entry.path) is None:
                         continue
                     try:
                         metadata = entry.stat()
-                        if stat.S_ISLNK(metadata.st_mode):
-                            metadata = self.resolve(entry.path).stat()
                         if not stat.S_ISREG(metadata.st_mode):
                             continue
                     except (OSError, FinderError, RuntimeError):
                         continue
                     count += 1
-                    yield -metadata.st_mtime_ns, entry.path.casefold(), entry.path
+                    yield metadata.st_mtime_ns, os.fsencode(entry.path), entry.path
 
         try:
             if executable:
@@ -430,14 +442,14 @@ class Finder:
                 if limited:
                     raise ScanTimeout()
             with closing(self.updated_entries(scope, include, filename, deadline)) as entries:
-                matches = heapq.nsmallest(limit, matching(entries)) if limit else sorted(matching(entries))
+                matches = heapq.nlargest(limit, matching(entries)) if limit else sorted(matching(entries), reverse=True)
         except ScanTimeout:
             return {'results': [], 'truncated': True, 'scan_complete': False,
                     'message': f'Scan exceeded the {timeout:g}-second limit. Search a narrower directory.'}
         results = []
-        for negative_modified_ns, _, path in matches:
+        for modified_ns, _, path in matches:
             try:
-                modified_at = datetime.fromtimestamp(-negative_modified_ns / 1_000_000_000, timezone.utc).isoformat()
+                modified_at = datetime.fromtimestamp(modified_ns / 1_000_000_000, timezone.utc).isoformat()
             except (OverflowError, OSError, ValueError):
                 modified_at = None
             results.append({'path': path, 'kind': 'file', 'url': path_url(path), 'modified_at': modified_at})

@@ -4,6 +4,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -222,7 +223,7 @@ class FinderTests(unittest.TestCase):
                 base = urls[0]
                 self.visit(base, 'old.md')
                 result = self.request_json(base, 'search', mode='updated')
-                expected = ['nested/한글 # ?.MD', 'nested/deep/new.HTML', 'Alpha.md', 'alpha.md', 'old.md']
+                expected = ['nested/한글 # ?.MD', 'nested/deep/new.HTML', 'old.md', 'alpha.md', 'Alpha.md']
                 self.assertEqual([r['path'] for r in result['results']], expected)
                 self.assertFalse(result['truncated'])
                 self.assertTrue(all(r['kind'] == 'file' and r['modified_at'].endswith('+00:00')
@@ -254,10 +255,10 @@ class FinderTests(unittest.TestCase):
                 base = urls[0]
                 def paths(**options):
                     return [r['path'] for r in self.request_json(base, 'search', mode='updated', **options)['results']]
-                self.assertEqual(paths(), ['Guide.MD', 'guide.md'])
+                self.assertEqual(paths(), ['guide.md', 'Guide.MD'])
                 self.assertEqual(set(paths(include='1')), {'Guide.MD', 'guide.md', 'draft.md', '.hidden.md'})
-                self.assertEqual(paths(filename=''), ['Guide.MD', 'guide.md', 'nested.md/plain.txt', 'notes.txt'])
-                self.assertEqual(paths(filename=r'\.txt$'), ['nested.md/plain.txt', 'notes.txt'])
+                self.assertEqual(paths(filename=''), ['notes.txt', 'nested.md/plain.txt', 'guide.md', 'Guide.MD'])
+                self.assertEqual(paths(filename=r'\.txt$'), ['notes.txt', 'nested.md/plain.txt'])
                 self.assertEqual(paths(filename=r'^Guide\.MD$'), ['Guide.MD'])
                 self.assertEqual(paths(exclude_filename=r'^guide'), [])
                 self.assertEqual(paths(filename='', scope_url='/nested.md/'), ['nested.md/plain.txt'])
@@ -280,8 +281,7 @@ class FinderTests(unittest.TestCase):
             result = finder.search(mode='updated')
             self.assertEqual([r['path'] for r in result['results']], [f'{i:03}.md' for i in range(204, 4, -1)])
             self.assertTrue(result['truncated'])
-            with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('rg', 3)):
-                result = finder.search(mode='updated')
+            result = finder.search(mode='updated', timeout=0.000001)
             self.assertEqual(result['results'], [])
             self.assertTrue(result['truncated'])
 
@@ -299,7 +299,7 @@ class FinderTests(unittest.TestCase):
             self.assertEqual(len(result['results']), 80)
             self.assertLess(lookups.call_count, 100)
 
-    def test_updated_metadata_validates_symlinks_and_handles_files_changed_after_scanning(self):
+    def test_updated_metadata_excludes_symlinks_and_handles_files_changed_after_scanning(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / 'root'
             root.mkdir()
@@ -322,8 +322,7 @@ class FinderTests(unittest.TestCase):
 
             with patch.object(finder, 'updated_entries', side_effect=scan_then_change):
                 result = finder.search(mode='updated')
-            self.assertEqual([r['path'] for r in result['results']], ['alias.md', 'target.md'])
-            self.assertEqual(result['results'][0]['modified_at'], result['results'][1]['modified_at'])
+            self.assertEqual([r['path'] for r in result['results']], ['target.md'])
             self.assertFalse(result['truncated'])
             self.assertTrue(result['scan_complete'])
 
@@ -427,7 +426,10 @@ class FinderTests(unittest.TestCase):
             (root / 'readme.md').write_text('# Find me\n')
             (root / 'ignored.md').write_text('ignored')
             (root / '.gitignore').write_text('ignored.md\n')
-            env = {**os.environ, 'PATH': str(root / 'empty-bin')}
+            tools = root / 'find-bin'
+            tools.mkdir()
+            (tools / 'find').symlink_to(shutil.which('find'))
+            env = {**os.environ, 'PATH': str(tools)}
             with self.server(root, '--bind', '127.0.0.1', env=env) as (_, urls, _):
                 result = self.request_json(urls[0], 'search', mode='files', q='md')
                 self.assertEqual([r['path'] for r in result['results']], ['readme.md'])
