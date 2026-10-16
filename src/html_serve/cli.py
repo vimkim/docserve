@@ -243,6 +243,9 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         if self.verbose:
             super().log_request(code, size)
 
+    def log_error(self, format, *args):
+        self.log_message('%s — "%s"', format % args, self.requestline)
+
     def list_directory(self, path):
         diagnostic = (lambda message: self.log_message("%s", message)) if self.verbose else None
         try:

@@ -1,10 +1,12 @@
 """Verify discovery and the foreground CLI's actual HTTP lifecycle."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from datetime import datetime, timezone
 import errno
+from functools import partial
 from html import unescape
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -15,6 +17,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -411,6 +414,50 @@ class ServeHTML(unittest.TestCase):
                 with self.assertRaises(OSError):
                     socket.create_connection(("127.0.0.1", port), timeout=1)
                 self.assertFalse((Path(temp) / "SHOULD_NOT_EXIST").exists())
+
+    def test_errors_include_request_paths_while_success_logs_require_verbose(self):
+        with tempfile.TemporaryDirectory(prefix="serve-html-logs-") as temp:
+            directory = Path(temp)
+            (directory / "index.html").write_text("<h1>Document</h1>")
+            (directory / "notes.md").write_text("# Notes")
+            client = build_opener(ProxyHandler({}))
+            cases = [
+                ("GET", "/missing%20file.css?theme=dark", 404, "File not found"),
+                ("HEAD", "/__serve_html__/missing.js", 404, "Preview asset not found"),
+                ("GET", "/notes.md", 500, "Markdown preview assets are missing"),
+                ("POST", "/index.html", 501, "Unsupported method"),
+            ]
+            for verbose in (False, True):
+                logs = io.StringIO()
+                handler = partial(helper.PreviewHTTPRequestHandler, directory=temp, verbose=verbose)
+                with self.subTest(verbose=verbose), redirect_stderr(logs), \
+                        patch.object(helper, "PREVIEW_ASSETS", directory / "absent-assets"), \
+                        helper.ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    try:
+                        root = f"http://127.0.0.1:{server.server_port}"
+                        for method in ("GET", "HEAD"):
+                            with client.open(Request(root + "/index.html", method=method), timeout=2) as response:
+                                self.assertEqual(response.status, 200)
+                                response.read()
+                        self.assertEqual(bool(logs.getvalue()), verbose)
+                        for method, path, status, message in cases:
+                            with self.subTest(method=method, path=path):
+                                logs.seek(0)
+                                logs.truncate(0)
+                                with self.assertRaises(HTTPError) as error:
+                                    client.open(Request(root + path, method=method), timeout=2)
+                                self.assertEqual(error.exception.code, status)
+                                error.exception.read()
+                                error.exception.close()
+                                lines = logs.getvalue().splitlines()
+                                self.assertEqual(len(lines), 2 if verbose else 1)
+                                self.assertIn(f"code {status}, message {message}", lines[0])
+                                self.assertIn(f'"{method} {path} HTTP/1.1"', lines[0])
+                    finally:
+                        server.shutdown()
+                        thread.join(timeout=5)
 
     def test_directories_list_index_pages_until_explicitly_requested(self):
         with tempfile.TemporaryDirectory(prefix="serve-html-test-") as temp:

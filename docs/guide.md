@@ -173,8 +173,10 @@ are URL-encoded. A selection that is already the root uses the root URLs without
 duplicates. The output needs no Markdown renderer, and terminals that recognize
 URLs can make them clickable.
 
-HTTP access logs, such as GET and HEAD requests, are quiet by default. Startup
-links and errors remain visible. Add `--verbose` to print request logs.
+Successful HTTP requests are quiet by default. Startup links and errors remain
+visible; each HTTP error includes the request method and URL, for example
+`code 404, message File not found — "GET /favicon.ico HTTP/1.1"`.
+Add `--verbose` to print all request logs.
 
 With no `--port`, or with `--port 0`, the CLI tries these patterns in order:
 
