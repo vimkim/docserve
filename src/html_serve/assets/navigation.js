@@ -62,17 +62,20 @@ function resetPreview() {
   openLink.hidden = true;
 }
 
-function matchText(element, text, ranges) {
+function matchText(element, text, ranges, firstByte = 0) {
   // ripgrep reports UTF-8 byte offsets. Convert them before slicing JavaScript strings.
   const bytes = new TextEncoder().encode(text);
   const decode = new TextDecoder();
   let offset = 0;
   for (const range of ranges) {
-    element.append(decode.decode(bytes.slice(offset, range.start)));
+    const start = Math.max(0, range.start - firstByte);
+    const end = Math.min(bytes.length, range.end - firstByte);
+    if (end < 0 || start > bytes.length) continue;
+    element.append(decode.decode(bytes.slice(offset, start)));
     const mark = document.createElement("mark");
-    mark.textContent = decode.decode(bytes.slice(range.start, range.end));
+    mark.textContent = decode.decode(bytes.slice(start, end));
     element.append(mark);
-    offset = range.end;
+    offset = end;
   }
   element.append(decode.decode(bytes.slice(offset)));
 }
@@ -101,7 +104,9 @@ async function select(index) {
   previewAbort = new AbortController();
   previewStatus.textContent = "Loading preview…";
   try {
-    const data = await api("preview", { path: result.path, line: result.line || 1 }, previewAbort.signal);
+    const data = await api("preview", {
+      url: result.url, line: result.line || 1, column: result.matches?.[0]?.start || 0,
+    }, previewAbort.signal);
     if (current !== previewGeneration) return;
     for (const line of data.lines) {
       const row = document.createElement("div");
@@ -112,7 +117,7 @@ async function select(index) {
       const code = document.createElement("code");
       if (line.number === result.line) {
         row.classList.add("finder-match");
-        matchText(code, line.text, result.matches || []);
+        matchText(code, line.text, result.matches || [], line.offset || 0);
       } else code.textContent = line.text;
       row.append(number, code);
       preview.append(row);
@@ -128,7 +133,7 @@ async function search(current) {
   searchAbort = new AbortController();
   try {
     const data = await api(mode === "recent" ? "recent" : "search", {
-      mode, q: query.value, scope: scope.value === "current" ? decodeURIComponent(location.pathname) : "/",
+      mode, q: query.value, scope_url: scope.value === "current" ? location.pathname : "/",
       include: include.checked ? "1" : "0", regex: regex.checked ? "1" : "0",
     }, searchAbort.signal);
     if (current !== generation) return;

@@ -64,6 +64,7 @@ before(async () => {
   await mkdir(path.join(directory, 'search-examples/empty'), { recursive: true });
   await writeFile(path.join(directory, 'search-examples/guide.md'), '# Search example\n한글 Needle.literal\nneedleXliteral\n');
   await writeFile(path.join(directory, '.finder-hidden.md'), 'Needle.literal\n');
+  await writeFile(path.join(directory, 'search-examples/long.txt'), '한'.repeat(5000) + 'farneedle\n');
 
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
@@ -189,6 +190,9 @@ test('content finder highlights Unicode matches and exposes scope, hidden files 
     await page.waitForFunction(() => document.querySelector('#finder-status').textContent.includes('regex parse error'));
     assert.equal(await page.locator('#finder-results [role="option"]').count(), 0);
     assert.equal(await page.locator('#finder-open').isVisible(), false);
+    await page.getByLabel('Regex', { exact: true }).uncheck();
+    await query.fill('farneedle');
+    await page.waitForFunction(() => document.querySelector('#finder-preview mark')?.textContent === 'farneedle');
   } finally { await page.close(); }
 });
 

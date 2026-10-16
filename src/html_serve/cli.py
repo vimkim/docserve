@@ -370,10 +370,12 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         try:
             endpoint = request.path.removeprefix(PREVIEW_PREFIX + 'api/')
             if endpoint == 'search':
-                result = self.finder.search(value('mode', 'files'), value('q'), value('scope', '/'),
+                scope = value('scope') if 'scope' in query else unquote(value('scope_url', '/'), errors='surrogatepass')
+                result = self.finder.search(value('mode', 'files'), value('q'), scope,
                                             value('include') == '1', value('regex') == '1')
             elif endpoint == 'preview':
-                result = self.finder.preview(value('path'), int(value('line', '1')))
+                path = value('path') if 'path' in query else unquote(value('url'), errors='surrogatepass')
+                result = self.finder.preview(path, int(value('line', '1')), int(value('column', '0')))
             elif endpoint == 'recent':
                 result = self.history.recent(value('q'))
             else:

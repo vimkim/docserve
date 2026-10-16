@@ -113,6 +113,7 @@ class FinderTests(unittest.TestCase):
             (root / 'keep.log').write_text('included')
             (root / '.git').mkdir()
             (root / '.git/config').write_text('never search')
+            (root / 'metadata-link').symlink_to('.git/config')
             (Path(temp) / 'outside.md').write_text('outside')
             (root / 'outside.md').symlink_to('../outside.md')
             (root / 'linked.md').symlink_to('notes/guide.md')
@@ -131,7 +132,11 @@ class FinderTests(unittest.TestCase):
                 result = self.request_json(base, 'search', mode='files', include='1')
                 paths = {r['path'] for r in result['results']}
                 self.assertTrue({'notes/secret.md', '.hidden.md', 'drop.log', 'ignored/file.md'} <= paths)
-                self.assertFalse(any(p.startswith('.git/') or p == 'outside.md' for p in paths))
+                self.assertFalse(any(p.startswith('.git/') or p in ('outside.md', 'metadata-link') for p in paths))
+                with self.assertRaises(HTTPError) as caught:
+                    self.request_json(base, 'preview', path='metadata-link')
+                self.assertEqual(caught.exception.code, 400)
+                caught.exception.close()
 
     def test_ignore_patterns_preserve_escaped_names_and_root_anchors_in_scoped_search(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -148,6 +153,59 @@ class FinderTests(unittest.TestCase):
                 self.assertEqual([r['path'] for r in result['results']], ['sub/root-only.md'])
                 result = self.request_json(urls[0], 'search', mode='directories', q='cache')
                 self.assertEqual([r['path'] for r in result['results']], ['cache'])
+
+    def test_ignore_source_priority_survives_nested_gitignore_overrides(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'sub').mkdir()
+            (root / '.rgignore').write_text('secret.txt\n')
+            (root / 'sub/.gitignore').write_text('!secret.txt\n')
+            (root / 'sub/secret.txt').write_text('secret')
+            (root / 'sub/visible.txt').write_text('visible')
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                result = self.request_json(urls[0], 'search', mode='files')
+                self.assertEqual([r['path'] for r in result['results']], ['sub/visible.txt'])
+
+    def test_preview_uses_rg_line_boundaries_and_handles_truncated_utf8(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'lines.txt').write_text('alpha\u2028beta\nneedle\n', encoding='utf-8')
+            (root / 'large.txt').write_text('한글\n' * 400000, encoding='utf-8')
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                result = self.request_json(urls[0], 'search', mode='contents', q='needle')
+                self.assertEqual(result['results'][0]['line'], 2)
+                result = self.request_json(urls[0], 'preview', path='lines.txt', line=2)
+                self.assertEqual(result['lines'][1], {'number': 2, 'text': 'needle'})
+                result = self.request_json(urls[0], 'preview', path='large.txt')
+                self.assertEqual(result['lines'][0]['text'], '한글')
+                self.assertTrue(result['truncated'])
+
+    def test_non_utf8_filename_does_not_break_search_preview_or_recent_visits(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = os.fsdecode(b'bad-\xff.txt')
+            (root / name).write_text('Valid UTF-8 content')
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                result = self.request_json(urls[0], 'search', mode='files')
+                self.assertEqual(result['results'][0]['path'], name)
+                url = result['results'][0]['url']
+                result = self.request_json(urls[0], 'preview', url=url)
+                self.assertEqual(result['lines'][0]['text'], 'Valid UTF-8 content')
+                self.visit(urls[0], url.lstrip('/'))
+                self.assertEqual(self.request_json(urls[0], 'recent')['results'][0]['path'], name)
+
+    def test_preview_keeps_a_match_visible_far_into_a_long_unicode_line(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'long.txt').write_text('한' * 5000 + 'farneedle\n', encoding='utf-8')
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                result = self.request_json(urls[0], 'search', mode='contents', q='farneedle')
+                match = result['results'][0]
+                self.assertIn('farneedle', match['text'])
+                result = self.request_json(urls[0], 'preview', path='long.txt', line=1,
+                                           column=match['matches'][0]['start'])
+                self.assertIn('farneedle', result['lines'][0]['text'])
+                self.assertEqual(result['lines'][0]['offset'], 12000)
 
     def test_content_search_literal_smart_case_regex_and_match_preview(self):
         with tempfile.TemporaryDirectory() as temp:

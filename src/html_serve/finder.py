@@ -1,5 +1,7 @@
 """Bounded, read-only search of a serving tree without browser dependencies."""
 
+import base64
+import codecs
 import fnmatch
 from itertools import islice
 import json
@@ -42,7 +44,7 @@ def segment_matches(pattern, value):
 
 
 def path_url(path, directory=False):
-    return '/' + quote(path, safe='/') + ('/' if directory and path else '')
+    return '/' + quote(path, safe='/', errors='surrogatepass') + ('/' if directory and path else '')
 
 
 def glob_parts(pattern, parts):
@@ -67,7 +69,7 @@ class IgnoreRules:
     def beneath(self, directory, relative):
         rules = list(self.rules)
         # Later sources take precedence, as in ripgrep.
-        for name in ('.gitignore', '.ignore', '.rgignore'):
+        for priority, name in enumerate(('.gitignore', '.ignore', '.rgignore')):
             try:
                 with (directory / name).open(encoding='utf-8', errors='replace') as stream:
                     lines = stream.read(PREVIEW_BYTES).splitlines()
@@ -90,12 +92,13 @@ class IgnoreRules:
                 anchored = line.startswith('/') or '/' in line
                 line = line.removeprefix('/')
                 if line:
-                    rules.append((relative, line, anchored, directory_only, negate))
+                    rules.append((priority, relative, line, anchored, directory_only, negate))
+        rules.sort(key=lambda rule: rule[0])
         return IgnoreRules(rules)
 
     def excludes(self, relative, directory):
         ignored = False
-        for base, pattern, anchored, directory_only, negate in self.rules:
+        for _, base, pattern, anchored, directory_only, negate in self.rules:
             if directory_only and not directory:
                 continue
             local = relative[len(base) + 1:] if base else relative
@@ -126,9 +129,22 @@ def fuzzy_rank(query, path):
     return score
 
 
+def text_window(text, column=0, limit=4000):
+    """Keep a selected UTF-8 byte column visible when shortening a long line."""
+    position = len(text.encode('utf-8')[:max(0, column)].decode('utf-8', errors='ignore'))
+    start = max(0, position - limit // 4) if len(text) > limit else 0
+    return text[start:start + limit], len(text[:start].encode('utf-8'))
+
+
 class Finder:
     def __init__(self, root):
         self.root = Path(root).resolve()
+
+    def target(self, path):
+        resolved = path.resolve()
+        if not resolved.is_relative_to(self.root) or '.git' in resolved.relative_to(self.root).parts:
+            raise FinderError('Path must stay inside the serving root and outside Git internals.')
+        return resolved
 
     def resolve(self, value, directory=False):
         relative = PurePosixPath(value.lstrip('/'))
@@ -136,9 +152,7 @@ class Finder:
             raise FinderError('Path must stay inside the serving root.')
         path = self.root.joinpath(*relative.parts)
         try:
-            resolved = path.resolve()
-            if not resolved.is_relative_to(self.root):
-                raise FinderError('Path must stay inside the serving root.')
+            self.target(path)
             parents = relative.parts if directory else relative.parts[:-1]
             ancestor = self.root
             for part in parents:
@@ -188,12 +202,12 @@ class Finder:
                     if not include and rules.excludes(path, is_directory):
                         continue
                     if child.is_symlink():
-                        target = Path(child.path).resolve()
-                        if not target.is_relative_to(self.root) or not target.is_file():
+                        target = self.target(Path(child.path))
+                        if not target.is_file():
                             continue
                     elif not is_directory and not child.is_file(follow_symlinks=False):
                         continue
-                except (OSError, RuntimeError):
+                except (OSError, RuntimeError, FinderError):
                     continue
                 found.append((path, is_directory))
                 if is_directory:
@@ -310,6 +324,8 @@ class Finder:
                                 continue
                             data = event['data']
                             path = data['path'].get('text')
+                            if path is None and 'bytes' in data['path']:
+                                path = os.fsdecode(base64.b64decode(data['path']['bytes']))
                             text = data['lines'].get('text')
                             if path is None or text is None:
                                 limited = True
@@ -320,8 +336,9 @@ class Finder:
                             except FinderError:
                                 limited = True
                                 continue
+                            snippet, offset = text_window(text.rstrip('\r\n'), data['submatches'][0]['start'], 500)
                             results.append({'path': path, 'kind': 'file', 'url': path_url(path),
-                                            'line': data['line_number'], 'text': text.rstrip('\r\n')[:4000],
+                                            'line': data['line_number'], 'text': ('…' if offset else '') + snippet,
                                             'matches': [{'start': m['start'], 'end': m['end']}
                                                         for m in data['submatches'][:100]]})
                             if len(results) >= limit:
@@ -348,7 +365,7 @@ class Finder:
                 process.stdout.close()
         return results, limited
 
-    def preview(self, path, line=1):
+    def preview(self, path, line=1, column=0):
         selected = self.resolve(path)
         try:
             with selected.open('rb') as stream:
@@ -358,18 +375,22 @@ class Finder:
         if b'\x00' in data:
             return {'lines': [], 'message': 'Binary file. Open the file to view or download it.'}
         try:
-            text = data[:FILE_BYTES].decode('utf-8')
+            text = codecs.getincrementaldecoder('utf-8')().decode(
+                data[:FILE_BYTES], final=len(data) <= FILE_BYTES)
         except UnicodeDecodeError:
             return {'lines': [], 'message': 'Preview is available for UTF-8 text files.'}
-        source = text.splitlines()
+        source = text.split('\n') if text else []
+        if text.endswith('\n'):
+            source.pop()
+        source = [value.removesuffix('\r') for value in source]
         first = max(0, min(line - 20, len(source) - 60)) if line > 1 else 0
         lines, size = [], 0
         for number, value in enumerate(source[first:first + 200], first + 1):
-            value = value[:4000]
+            value, offset = text_window(value, column if number == line else 0)
             size += len(value.encode('utf-8'))
             if size > PREVIEW_BYTES:
                 break
-            lines.append({'number': number, 'text': value})
+            lines.append({'number': number, 'text': value, **({'offset': offset} if offset else {})})
         return {'lines': lines, 'truncated': len(data) > FILE_BYTES or first > 0
                 or first + len(lines) < len(source) or any(len(s) > 4000 for s in source),
                 'message': 'Empty file.' if not source else ''}
