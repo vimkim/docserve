@@ -42,6 +42,18 @@ def interface(name, address, **extra):
 
 
 class ServeHTML(unittest.TestCase):
+    def test_navigation_names_and_root_link(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'docs').mkdir()
+            (root / 'docs/readme.md').write_text('# Read me\n')
+            client = build_opener(ProxyHandler({}))
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                with client.open(urls[0] + 'docs/') as response:
+                    self.assertIn('<a href="/">Go to root</a>', response.read().decode())
+                with client.open(urls[0] + 'docs/readme.md') as response:
+                    self.assertIn('<a href="./">Directory listing</a>', response.read().decode())
+
     def listing_links(self, body):
         return [(unescape(href), unescape(label)) for href, label in re.findall(
             r'<tr><td><a href="([^"]+)">([^<]*)</a>', body,

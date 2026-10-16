@@ -13,3 +13,19 @@ browser dependencies. Retain the manifest and license notices.
 Run `just sync` from the primary main checkout after an approved local merge.
 The editable installation follows that checkout. Use temporary environments to
 test task worktrees without replacing the installed command.
+
+## Agent skills
+
+### Issue tracker
+
+Specs and tickets use GitHub Issues in `vimkim/html-serve`.
+Read `docs/agents/issue-tracker.md` before tracker operations.
+
+### Triage labels
+
+Use the role mappings in `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository has one domain context.
+Read `docs/agents/domain.md` before domain exploration or design.

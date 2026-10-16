@@ -224,6 +224,7 @@ td:first-child {{ min-width: 160px; overflow-wrap: anywhere; }}
 td:not(:first-child) {{ white-space: nowrap; font-variant-numeric: tabular-nums; }}
 @media (max-width: 767px) {{ body {{ padding: 16px; }} }}
 </style></head><body><h1>{escape(title)}</h1>
+<nav aria-label="Directory"><a href="/">Go to root</a></nav>
 <p>Select a column to sort; select it again to reverse. Times: server local.
 Creation dates are unavailable when the filesystem does not provide them.</p>
 <div class="table-scroll" role="region" aria-label="Files" tabindex="0"><table>

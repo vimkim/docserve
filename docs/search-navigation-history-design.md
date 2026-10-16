@@ -1,6 +1,6 @@
 # Search, navigation, and recent visits
 
-Status: design in progress. Work-tracker item: 391. Starting revision: `a3e3030`.
+Status: approved on 2026-10-16. Work-tracker item: 391. Starting revision: `a3e3030`.
 
 The reader needs to locate files and directories quickly, inspect search results, and return to previously visited paths.
 The shared vocabulary is in [the glossary](../GLOSSARY.md).
@@ -47,9 +47,7 @@ Specs and implementation tickets belong in `vimkim/html-serve` GitHub Issues.
 The configured remote returns HTTP 404 to the authenticated `vimkim` account.
 Keep publication drafts local until that repository becomes accessible. Repository creation and pushing source require separate authorization.
 
-## Proposed remaining behavior
-
-These choices await the reader's answer:
+## Search boundary
 
 - Include symlinked files in search only when their targets remain inside the serving root.
 - Skip symlinked directories during recursive search.
@@ -59,9 +57,7 @@ Implementation will use bounded previews, search results, and query execution.
 The finder will show truncation, unavailable previews, invalid patterns, and search failures explicitly.
 HTML and other active document source will appear as text in previews.
 
-## Proposed verification boundaries
-
-Approve these boundaries before implementation tests start:
+## Approved verification boundaries
 
 | Boundary | What it verifies | Practical limit |
 | --- | --- | --- |
@@ -74,7 +70,7 @@ Keep directory navigation and sorting functional without JavaScript.
 Run `just test`, `just browser-test`, and `just build` before the final review.
 Test the task worktree with temporary environments. Keep the installed editable command attached to the primary checkout.
 
-## Proposed implementation slices
+## Approved implementation slices
 
 1. Navigation and naming: add Go to root and rename the Markdown Directory listing link.
 2. File and directory finder: add the shared screen, fuzzy path matching, source previews, scope, and ignore controls.
