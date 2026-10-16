@@ -4,8 +4,10 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlencode
 from urllib.request import ProxyHandler, Request, build_opener
 from urllib.error import HTTPError
@@ -85,6 +87,39 @@ class FinderTests(unittest.TestCase):
                 result = self.request_json(urls[0], 'recent')
                 self.assertEqual([r['path'] for r in result['results']], ['1.txt'])
                 self.assertIn('server session', result['message'])
+
+    def test_recent_type_filters_preserve_query_order_and_stored_history(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / 'root'
+            (root / 'docs/nested').mkdir(parents=True)
+            (root / 'docs/one.txt').write_text('one')
+            (root / 'docs/two.txt').write_text('two')
+            env = {**os.environ, 'XDG_CACHE_HOME': str(Path(temp) / 'cache')}
+            with self.server(root, '--bind', '127.0.0.1', env=env) as (_, urls, _):
+                base = urls[0]
+                for path in ('', 'docs/', 'docs/one.txt', 'docs/nested/', 'docs/two.txt'):
+                    self.visit(base, path)
+                expected = ['docs/two.txt', 'docs/nested', 'docs/one.txt', 'docs', '']
+                for kind, paths in [('all', expected), ('file', ['docs/two.txt', 'docs/one.txt']),
+                                    ('directory', ['docs/nested', 'docs', ''])]:
+                    with self.subTest(kind=kind):
+                        result = self.request_json(base, 'recent', kind=kind)
+                        self.assertEqual([r['path'] for r in result['results']], paths)
+                result = self.request_json(base, 'recent', kind='directory', q='nested')
+                self.assertEqual([r['path'] for r in result['results']], ['docs/nested'])
+                self.assertEqual(self.request_json(base, 'recent', kind='directory', q='one.txt')['results'], [])
+                result = self.request_json(base, 'recent', kind='file', q='one')
+                self.assertEqual([r['path'] for r in result['results']], ['docs/one.txt'])
+                (root / 'docs/two.txt').unlink()
+                result = self.request_json(base, 'recent', kind='file')
+                self.assertEqual([r['path'] for r in result['results']], ['docs/one.txt'])
+                with self.assertRaises(HTTPError) as caught:
+                    self.request_json(base, 'recent', kind='unknown')
+                self.assertEqual(caught.exception.code, 400)
+                caught.exception.close()
+            with self.server(root, '--bind', '127.0.0.1', env=env) as (_, urls, _):
+                result = self.request_json(urls[0], 'recent')
+                self.assertEqual([r['path'] for r in result['results']], expected[1:])
 
     @unittest.skipIf(os.geteuid() == 0, 'Root bypasses the cache permission fixture')
     def test_history_keeps_unsaved_visits_when_existing_cache_remains_readable(self):
@@ -277,6 +312,59 @@ class FinderTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, 503)
                 self.assertIn('requires ripgrep', json.load(caught.exception)['error'])
                 caught.exception.close()
+
+    def test_content_filename_regex_filters_match_basenames_and_compose_with_search_options(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'nested.md').mkdir()
+            (root / 'empty').mkdir()
+            names = ['guide.md', 'Guide.MD', 'draft.md', 'notes.txt', 'nested.md/plain.txt',
+                     'nested.md/guide.md', '한글 #\n?.md', '\ufeffguide.md', os.fsdecode(b'bad-\xff.md'), '.hidden.md']
+            for name in names:
+                (root / name).write_text('needle.literal\nneedleXliteral\n')
+            (root / '.gitignore').write_text('draft.md\n')
+            (root / 'huge.bin').write_bytes(b'x' * (2 * 1024 * 1024 + 1))
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                base = urls[0]
+                def paths(**options):
+                    result = self.request_json(base, 'search', mode='contents', q='needle.literal', **options)
+                    self.assertFalse(result['truncated'])
+                    return [r['path'] for r in result['results']]
+                markdown = {n for n in names if n.lower().endswith('.md') and n not in ('draft.md', '.hidden.md')}
+                self.assertEqual(set(paths(filename=r'\.md$')), markdown)
+                self.assertEqual(set(paths(filename=r'\.md$', exclude_filename=r'^guide')), markdown - {'guide.md', 'Guide.MD', 'nested.md/guide.md'})
+                self.assertEqual(paths(filename=r'^Guide\.MD$'), ['Guide.MD'])
+                self.assertEqual(paths(filename='^\ufeff', exclude_filename='^draft'), ['\ufeffguide.md'])
+                self.assertEqual(set(paths(filename=r'^guide\.md$')), {'Guide.MD', 'guide.md', 'nested.md/guide.md'})
+                self.assertEqual(set(paths(exclude_filename=r'\.md$')), {'notes.txt', 'nested.md/plain.txt'})
+                self.assertEqual(paths(filename=r'nested'), [])
+                self.assertEqual(paths(filename=r'\.md$', scope='/nested.md/'), ['nested.md/guide.md'])
+                self.assertEqual(set(paths(filename=r'\.md$', include='1')), markdown | {'draft.md', '.hidden.md'})
+                self.assertEqual(paths(filename=r'\.md$', exclude_filename=r'\.md$'), [])
+                self.assertEqual(paths(filename=r'^notes', regex='1'), ['notes.txt', 'notes.txt'])
+                result = self.request_json(base, 'search', mode='contents', q='needle', filename=r'\.md$')
+                self.assertEqual(result['message'], '')  # Excluded large files do not count as skipped.
+                for field, label in [('filename', 'Include filenames'), ('exclude_filename', 'Exclude filenames')]:
+                    for options in ({'q': 'needle'}, {'q': ''}, {'q': 'needle', 'scope': '/empty/'},
+                                    {'q': 'needle', 'filename': 'no-match'}):
+                        with self.subTest(field=field, options=options), self.assertRaises(HTTPError) as caught:
+                            self.request_json(base, 'search', mode='contents', **{**options, field: '['})
+                        self.assertEqual(caught.exception.code, 400)
+                        self.assertIn(label, json.load(caught.exception)['error'])
+                        caught.exception.close()
+                    with self.assertRaises(HTTPError) as caught:
+                        self.request_json(base, 'search', mode='contents', q='needle', **{field: 'x' * 501})
+                    self.assertEqual(caught.exception.code, 400)
+                    caught.exception.close()
+
+    def test_content_filename_filter_timeout_reports_limited_results(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / 'readme.md').write_text('needle')
+            finder = existing.helper.Finder(temp)
+            with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('rg', 3)):
+                result = finder.search(mode='contents', q='needle', filename=r'\.md$')
+            self.assertEqual(result['results'], [])
+            self.assertTrue(result['truncated'])
 
     def test_preview_boundaries_binary_files_and_invalid_requests(self):
         with tempfile.TemporaryDirectory() as temp:

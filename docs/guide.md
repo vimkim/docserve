@@ -89,6 +89,16 @@ characters are case-sensitive. Select **Regex** for regular expressions.
 Results include matching line numbers, and the preview highlights the selected
 match. Opening a result uses its normal viewer, including rendered Markdown.
 
+Use **Include filenames (regex)** to search only matching filenames and
+**Exclude filenames (regex)** to skip matching filenames. Both are optional
+and match the filename, including its extension, rather than directory names.
+For example, include `\.md$` for Markdown files or `\.(md|txt)$` for Markdown
+and text files; exclude `^draft` to skip names starting with `draft`.
+These filters always use ripgrep regular expressions, independently of the
+content **Regex** checkbox, and use the same smart-case behavior. Exclusion
+takes precedence. Invalid patterns show an error. Filename filtering shares
+the content search's execution budget.
+
 Search returns up to 200 results after scanning at most 20,000 entries.
 Tree scans and content searches each have a three-second execution budget.
 Content search skips files larger than 2 MiB and returns up to 40 matching
@@ -103,6 +113,9 @@ opened through browser navigation. Revisiting a path moves it to the top.
 Previews, scripts, images, background requests, and HEAD requests do not add
 visits. Removed paths disappear from results. Type to filter the history.
 Visit order is separate from the listing's modification-time order.
+Choose **All** (the default), **Files only**, or **Directories only** to filter
+the history by entry type. The text query and entry-type filter work together
+and preserve visit order; filtering keeps the stored history intact.
 
 The server stores each serving root's history in a separate file under
 `$XDG_CACHE_HOME/html-serve/visits/`, normally `~/.cache/html-serve/visits/`.

@@ -11,9 +11,9 @@ import tempfile
 import threading
 
 if __package__:
-    from .finder import fuzzy_rank, path_url
+    from .finder import FinderError, fuzzy_rank, path_url
 else:
-    from finder import fuzzy_rank, path_url
+    from finder import FinderError, fuzzy_rank, path_url
 
 
 class VisitHistory:
@@ -100,7 +100,9 @@ class VisitHistory:
                 entries[item['path']] = item
         return sorted(entries.values(), key=lambda item: item['visited_at'], reverse=True)[:100]
 
-    def recent(self, query=''):
+    def recent(self, query='', kind='all'):
+        if kind not in ('all', 'file', 'directory'):
+            raise FinderError('Recent visit type must be all, file, or directory.')
         with self.lock:
             try:
                 with self.disk_lock():
@@ -109,12 +111,14 @@ class VisitHistory:
                 self.warning = 'History cannot be loaded. Showing visits from this server session.'
             results = []
             for entry in self.memory:
-                path, kind = entry['path'], entry['kind']
+                path, entry_kind = entry['path'], entry['kind']
+                if kind != 'all' and kind != entry_kind:
+                    continue
                 target = self.root / path
                 try:
-                    exists = target.is_dir() if kind == 'directory' else target.is_file()
+                    exists = target.is_dir() if entry_kind == 'directory' else target.is_file()
                 except OSError:
                     exists = False
                 if exists and fuzzy_rank(query, path or '/') is not None:
-                    results.append({**entry, 'url': path_url(path, kind == 'directory')})
+                    results.append({**entry, 'url': path_url(path, entry_kind == 'directory')})
             return {'results': results, 'truncated': False, 'message': self.warning}

@@ -214,14 +214,17 @@ class Finder:
                     stack.append((Path(child.path), path, rules))
         return found, truncated
 
-    def search(self, mode='files', q='', scope='/', include=False, regex=False):
+    def search(self, mode='files', q='', scope='/', include=False, regex=False,
+               filename='', exclude_filename=''):
         if mode not in ('files', 'directories', 'contents'):
             raise FinderError('Unknown search mode.')
         if len(q) > 500:
             raise FinderError('Search queries must contain at most 500 characters.')
+        if len(filename) > 500 or len(exclude_filename) > 500:
+            raise FinderError('Filename filters must contain at most 500 characters.')
         entries, truncated = self.entries(scope, include)
         if mode == 'contents':
-            return self.contents(entries, q, regex, truncated)
+            return self.contents(entries, q, regex, truncated, filename, exclude_filename)
         matches = []
         for path, directory in entries:
             if directory != (mode == 'directories'):
@@ -235,10 +238,45 @@ class Finder:
                             for _, path, directory in matches[:RESULT_LIMIT]],
                 'truncated': truncated or len(matches) > RESULT_LIMIT}
 
-    def contents(self, entries, query, regex, truncated):
+    def filter_filenames(self, executable, entries, filename, exclude_filename, deadline):
+        """Use rg's bounded regex engine on NUL-delimited basenames, including newlines."""
+        entries = [(path, directory) for path, directory in entries if not directory]
+        for pattern, exclude, label in ((filename, False, 'Include filenames'),
+                                        (exclude_filename, True, 'Exclude filenames')):
+            if not pattern:
+                continue
+            command = [executable, '--no-config', '--null-data', '--smart-case',
+                       '--encoding', 'none', '--color', 'never', '--no-filename', '--no-line-number']
+            if exclude:
+                command.append('--invert-match')
+            command.extend(['-e', pattern, '--', '-'])
+            names = {os.fsencode(path.rsplit('/', 1)[-1]) for path, _ in entries}
+            data = b''.join(name + b'\x00' for name in sorted(names))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return [], True
+            try:
+                result = subprocess.run(command, input=data, capture_output=True, timeout=remaining)
+            except subprocess.TimeoutExpired:
+                return [], True
+            except OSError as error:
+                raise FinderError('Could not start ripgrep on the server.', 503) from error
+            if result.returncode not in (0, 1):
+                detail = result.stderr[:4096].decode('utf-8', errors='replace').strip()
+                raise FinderError(f'{label}: {detail or "Invalid filename pattern."}')
+            matching = set(result.stdout.split(b'\x00'))
+            entries = [(path, directory) for path, directory in entries
+                       if os.fsencode(path.rsplit('/', 1)[-1]) in matching]
+        return entries, False
+
+    def contents(self, entries, query, regex, truncated, filename='', exclude_filename=''):
         executable = shutil.which('rg')
         if not executable:
             raise FinderError('Content search requires ripgrep (rg). Install rg on the server to enable it.', 503)
+        deadline = time.monotonic() + SCAN_SECONDS
+        entries, limited = self.filter_filenames(executable, entries, filename, exclude_filename, deadline)
+        if limited:
+            return {'results': [], 'truncated': True}
         if not query:
             return {'results': [], 'truncated': False, 'message': 'Type text to search file contents.'}
         command = [executable, '--no-config', '--json', '--smart-case', '--max-count', '40',
@@ -271,7 +309,6 @@ class Finder:
         if not batches:
             batches = [[os.devnull]]
         results, counts = [], {}
-        deadline = time.monotonic() + SCAN_SECONDS
         for batch in batches:
             remaining = RESULT_LIMIT - len(results)
             matches, limited = self.rg_batch(command + batch, deadline, remaining)

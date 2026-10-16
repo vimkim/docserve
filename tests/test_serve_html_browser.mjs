@@ -65,6 +65,10 @@ before(async () => {
   await writeFile(path.join(directory, 'search-examples/guide.md'), '# Search example\n한글 Needle.literal\nneedleXliteral\n');
   await writeFile(path.join(directory, '.finder-hidden.md'), 'Needle.literal\n');
   await writeFile(path.join(directory, 'search-examples/long.txt'), '한'.repeat(5000) + 'farneedle\n');
+  await mkdir(path.join(directory, 'filename-examples/nested.md'), { recursive: true });
+  for (const name of ['guide.md', 'draft.md', 'notes.txt', 'nested.md/plain.txt', '한글 #.MD']) {
+    await writeFile(path.join(directory, 'filename-examples', name), 'filename-filter-token\n');
+  }
 
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
@@ -198,7 +202,56 @@ test('content finder highlights Unicode matches and exposes scope, hidden files 
   } finally { await page.close(); }
 });
 
-test('recent visits reopen files and directories and finder fits a narrow screen', async () => {
+test('content filename filters include, exclude, report errors and fit desktop and narrow screens', async () => {
+  for (const width of [1280, 390]) {
+    const page = await browser.newPage({ viewport: { width, height: 844 } });
+    try {
+      await page.goto(baseURL);
+      await page.getByRole('button', { name: 'Find contents', exact: true }).click();
+      const query = page.getByRole('searchbox', { name: 'Search query' });
+      const include = page.getByRole('textbox', { name: 'Include filenames (regex)', exact: true });
+      const exclude = page.getByRole('textbox', { name: 'Exclude filenames (regex)', exact: true });
+      const paths = page.locator('#finder-results .finder-result-path');
+      const waitForCount = count => page.waitForFunction(count => document.querySelector('#finder-status').textContent === `${count} result${count === 1 ? '' : 's'}.`, count);
+      await query.fill('filename-filter-token');
+      await waitForCount(5);
+      await include.fill('\\.md$');
+      await waitForCount(3);
+      assert.deepEqual((await paths.allTextContents()).sort(), ['filename-examples/draft.md', 'filename-examples/guide.md', 'filename-examples/한글 #.MD']);
+      await exclude.fill('^draft');
+      await waitForCount(2);
+      assert.deepEqual((await paths.allTextContents()).sort(), ['filename-examples/guide.md', 'filename-examples/한글 #.MD']);
+      await page.getByLabel('Regex', { exact: true }).check();
+      await waitForCount(2);
+      await page.waitForFunction(() => document.querySelector('#finder-preview mark')?.textContent === 'filename-filter-token');
+      assert.equal(await page.locator('#finder').evaluate(element => element.scrollWidth <= element.clientWidth), true);
+      if (width === 390) {
+        const resultBounds = await page.locator('#finder-results').boundingBox();
+        const previewBounds = await page.locator('.finder-preview-pane').boundingBox();
+        assert.ok(resultBounds.height > 50 && previewBounds.height > 50);
+        assert.ok(previewBounds.y > resultBounds.y);
+      }
+      for (const [control, label] of [[include, 'Include filenames'], [exclude, 'Exclude filenames']]) {
+        await control.fill('[');
+        await page.waitForFunction(label => document.querySelector('#finder-status').textContent.startsWith(label + ':'), label);
+        assert.equal(await paths.count(), 0);
+        assert.equal(await page.locator('#finder-open').isVisible(), false);
+        await control.fill(control === include ? '\\.md$' : '^draft');
+        await waitForCount(2);
+      }
+      await page.getByRole('tab', { name: 'Files', exact: true }).click();
+      assert.equal(await include.isVisible(), false);
+      await page.getByRole('tab', { name: 'Contents', exact: true }).click();
+      await waitForCount(2);
+      await include.fill('');
+      await waitForCount(4);
+      await exclude.fill('');
+      await waitForCount(5);
+    } finally { await page.close(); }
+  }
+});
+
+test('recent visits filter files and directories, reopen paths and fit a narrow screen', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   try {
     await page.goto(baseURL + 'search-examples/');
@@ -209,7 +262,23 @@ test('recent visits reopen files and directories and finder fits a narrow screen
     await page.getByRole('button', { name: 'Recently visited', exact: true }).click();
     await page.getByRole('searchbox', { name: 'Search query' }).fill('search-examples');
     await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '2 results.');
-    assert.equal(await page.getByRole('option').count(), 2);
+    const paths = page.locator('#finder-results .finder-result-path');
+    const kind = page.getByRole('combobox', { name: 'Recent visit type' });
+    assert.equal(await kind.inputValue(), 'all');
+    assert.deepEqual(await paths.allTextContents(), ['search-examples/', 'search-examples/guide.md']);
+    await kind.selectOption('directory');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '1 result.');
+    assert.deepEqual(await paths.allTextContents(), ['search-examples/']);
+    assert.equal(await page.getByRole('link', { name: 'Open directory', exact: true }).isVisible(), true);
+    await page.getByRole('searchbox', { name: 'Search query' }).fill('guide');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '0 results.');
+    await kind.selectOption('file');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '1 result.');
+    assert.deepEqual(await paths.allTextContents(), ['search-examples/guide.md']);
+    await page.getByRole('searchbox', { name: 'Search query' }).fill('search-examples');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '1 result.');
+    await kind.selectOption('all');
+    await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '2 results.');
     const file = page.getByRole('option').filter({ hasText: 'search-examples/guide.md' });
     await file.click();
     await page.waitForFunction(() => document.querySelector('#finder-preview')?.textContent.includes('# Search example'));

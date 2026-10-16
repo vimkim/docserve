@@ -21,6 +21,14 @@ tools.innerHTML = `
       <label><input id="finder-include" type="checkbox"> Include hidden and ignored</label>
       <label id="finder-regex-label" hidden><input id="finder-regex" type="checkbox"> Regex</label>
     </div>
+    <div id="finder-filename-filters" hidden>
+      <label>Include filenames (regex)<input id="finder-filename" type="text" placeholder="e.g. \\.md$" maxlength="500" autocomplete="off" spellcheck="false" aria-describedby="finder-filename-help"></label>
+      <label>Exclude filenames (regex)<input id="finder-exclude-filename" type="text" placeholder="e.g. ^draft" maxlength="500" autocomplete="off" spellcheck="false" aria-describedby="finder-filename-help"></label>
+      <p id="finder-filename-help">Optional. Match filenames only. Lowercase patterns ignore case; uppercase makes them case-sensitive. Exclude wins.</p>
+    </div>
+    <div id="finder-recent-options" hidden>
+      <label>Show <select id="finder-recent-kind" aria-label="Recent visit type"><option value="all">All</option><option value="file">Files only</option><option value="directory">Directories only</option></select></label>
+    </div>
     <p id="finder-status" role="status" aria-live="polite"></p>
     <div class="finder-panes">
       <ul id="finder-results" role="listbox" aria-label="Search results" tabindex="0"></ul>
@@ -43,6 +51,9 @@ const openLink = document.getElementById("finder-open");
 const scope = document.getElementById("finder-scope");
 const include = document.getElementById("finder-include");
 const regex = document.getElementById("finder-regex");
+const filename = document.getElementById("finder-filename");
+const excludeFilename = document.getElementById("finder-exclude-filename");
+const recentKind = document.getElementById("finder-recent-kind");
 let mode = "files", results = [], selected = -1, generation = 0, previewGeneration = 0;
 let opener, searchAbort, previewAbort, timer;
 
@@ -135,6 +146,8 @@ async function search(current) {
     const data = await api(mode === "recent" ? "recent" : "search", {
       mode, q: query.value, scope_url: scope.value === "current" ? location.pathname : "/",
       include: include.checked ? "1" : "0", regex: regex.checked ? "1" : "0",
+      filename: mode === "contents" ? filename.value : "",
+      exclude_filename: mode === "contents" ? excludeFilename.value : "", kind: recentKind.value,
     }, searchAbort.signal);
     if (current !== generation) return;
     results = data.results;
@@ -193,6 +206,8 @@ function changeMode(value) {
   document.getElementById("finder-title").textContent = labels[mode];
   document.getElementById("finder-regex-label").hidden = mode !== "contents";
   document.getElementById("finder-options").hidden = mode === "recent";
+  document.getElementById("finder-filename-filters").hidden = mode !== "contents";
+  document.getElementById("finder-recent-options").hidden = mode !== "recent";
   for (const tab of dialog.querySelectorAll("[data-mode]")) {
     tab.setAttribute("aria-selected", String(tab.dataset.mode === mode));
     tab.tabIndex = tab.dataset.mode === mode ? 0 : -1;
@@ -221,8 +236,8 @@ for (const tab of dialog.querySelectorAll("[data-mode]")) {
     changeMode(tabs[next].dataset.mode);
   });
 }
-query.addEventListener("input", () => schedule());
-for (const control of [scope, include, regex]) control.addEventListener("change", () => schedule(true));
+for (const control of [query, filename, excludeFilename]) control.addEventListener("input", () => schedule());
+for (const control of [scope, include, regex, recentKind]) control.addEventListener("change", () => schedule(true));
 for (const element of [query, list]) element.addEventListener("keydown", event => {
   if (event.isComposing) return;
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
