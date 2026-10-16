@@ -12,6 +12,7 @@ check = ["playwright>=1.50,<2"]
 [project.scripts]
 docserve = "html_serve.cli:main"
 docserve-check = "html_serve.check:main"
+docserve-recent = "html_serve.recent:main"
 html-serve = "html_serve.cli:main"
 md-serve = "html_serve.cli:main"
 

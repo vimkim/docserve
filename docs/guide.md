@@ -154,6 +154,38 @@ addresses. Servers for the same root share the history. It stores paths,
 entry types, and visit times, without file contents. If the cache is
 unavailable, the server keeps recent visits in memory for its current session.
 
+## Recently updated files from the terminal
+
+Run the same Recently updated search without an HTTP server:
+
+```sh
+docserve-recent ~
+docserve-recent docs --json
+docserve-recent . --query review --filename '\.(md|txt)$' --exclude-filename '^draft'
+docserve-recent . --filename '' --include
+```
+
+The optional directory defaults to the current directory. The command searches
+that directory, without selecting its Git repository root. It uses the finder's
+ignore, symlink, filename filter, fuzzy query, and modification order rules.
+`--include` includes hidden and ignored entries. The default filename filter
+selects `.html` and `.md` files. Filename filters require `rg`.
+
+Text output shows local modification times and absolute paths, one file per line.
+It escapes backslashes, newlines, carriage returns, and tabs in paths.
+`--json` emits `root`, `results`, and `truncated`. Each result contains the finder's
+relative `path`, `kind`, `url`, and UTC `modified_at`.
+
+The command retains the finder's 20,000-entry scan limit, 200-result limit, and
+separate three-second budgets for scanning and filtering/metadata checks.
+An incomplete scan can omit the newest files. Text output warns on stderr.
+JSON sets `truncated` to `true`. Exit codes are `0` for complete results,
+`1` for search or input errors, `2` for usage errors, and `3` for limited results.
+Search a narrower directory when results are limited.
+
+From a source checkout, use `uv run docserve-recent ~` or
+`PYTHONPATH=src python -m html_serve.recent ~` before installation.
+
 ## Document navigation
 
 HTML and Markdown start with a compact banner. **Directory listing** opens a
@@ -429,8 +461,9 @@ route to the server.
 ## Source and installation
 
 Clone this repository to `~/gh/docserve` and run `just sync` from its main
-checkout. The recipe installs `docserve` and its `html-serve` and `md-serve` aliases
-in `~/.local/bin` as an editable uv tool. It requires uv and just.
+checkout. The recipe installs `docserve`, `docserve-check`, `docserve-recent`, and
+the `html-serve` and `md-serve` aliases in `~/.local/bin` as an editable uv tool.
+It requires uv and just.
 Serving requires Python 3.10+ and Linux `ip` for network discovery. It has no third-party Python runtime dependencies.
 
 The server lives in `src/html_serve/cli.py`; viewer files and their bundled
