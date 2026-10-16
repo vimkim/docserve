@@ -18,7 +18,7 @@ test task worktrees without replacing the installed command.
 
 ### Issue tracker
 
-Specs and tickets use GitHub Issues in `vimkim/html-serve`.
+Specs and tickets use GitHub Issues in `vimkim/docserve`.
 Read `docs/agents/issue-tracker.md` before tracker operations.
 
 ### Triage labels

@@ -43,9 +43,12 @@ History is separate from modification-time sorting.
 History persists across server restarts and port changes, with separate histories for separate serving roots.
 The server stores history under `$XDG_CACHE_HOME/html-serve/`, or `~/.cache/html-serve/` when that variable is absent.
 
-Specs and implementation tickets belong in `vimkim/html-serve` GitHub Issues.
-The configured remote returns HTTP 404 to the authenticated `vimkim` account.
-Keep publication drafts local until that repository becomes accessible. Repository creation and pushing source require separate authorization.
+The approved spec is [GitHub issue 1](https://github.com/vimkim/docserve/issues/1).
+Its four implementation tickets are issues [2](https://github.com/vimkim/docserve/issues/2),
+[3](https://github.com/vimkim/docserve/issues/3), [4](https://github.com/vimkim/docserve/issues/4),
+and [5](https://github.com/vimkim/docserve/issues/5).
+The repository became accessible during implementation. Its canonical name is now `vimkim/docserve`.
+The previous `vimkim/html-serve` URL redirects there. Source pushes require separate authorization.
 
 ## Search boundary
 
@@ -80,3 +83,47 @@ Test the task worktree with temporary environments. Keep the installed editable 
 Each slice includes its UI, server behavior where necessary, and focused verification.
 The content finder depends on the shared finder. History can follow the finder without depending on its search implementation.
 Commit task changes before requesting the approved local merge workflow.
+
+
+## Verification result
+
+Code revision: `8bdb14b`. Local integration awaits approval.
+
+- `just test`: 47 Python tests passed.
+- `just browser-test`: 16 headless-browser tests passed.
+- `just build`: wheel and source distribution passed.
+- Installed wheel: 13 finder/history HTTP tests and three finder browser scenarios passed.
+- Wheel inventory: viewer files, finder files, vendor chunks, fonts, and third-party notices are present.
+- Every vendor file matches its SHA-256 manifest entry.
+- Markdown source validation and `git diff --check` passed.
+
+A narrow-screen finder screenshot received a visual review.
+Tests use isolated caches and temporary environments. The installed editable command still follows the primary checkout.
+
+## Standards
+
+The initial review found three issues: Git-internal symlink aliases, truncated UTF-8 previews, and unusual Linux filenames.
+A follow-up found one issue with unsaved visits after cache write failures.
+Regression tests cover all four findings. Commits `e359879` and `34eb5b8` resolve them.
+The final response-header adjustment also passed review.
+
+Final result: no remaining material Standards or correctness findings.
+
+## Spec
+
+The initial review found three issues: ignore-source priority, Git-internal symlink aliases, and preview line numbering.
+Commit `e359879` resolves all three. The reviewer reran each reproduction successfully.
+
+Final result: no remaining Spec findings or additional scope creep.
+
+Review totals: Standards, zero open findings. Spec, zero open findings. Neither axis has an unresolved issue.
+
+## Integration state
+
+The primary checkout advanced to `7f9ff88` during this work.
+That commit reorganizes the English and Korean documentation.
+Preserve that documentation during the approved rebase. Place detailed finder documentation in the command reference after integration.
+Later main commits rename the command to docserve with CLI aliases and add request paths to HTTP error logs.
+Preserve those changes during integration as well.
+
+The task checkout is separate from the primary checkout. No local merge, installation sync, or source push occurred.

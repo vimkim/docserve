@@ -1,7 +1,7 @@
 # Issue tracker: GitHub
 
-Specs and tickets belong in GitHub Issues for `vimkim/html-serve`.
-Use `gh` with an explicit `--repo vimkim/html-serve` argument.
+Specs and tickets belong in GitHub Issues for `vimkim/docserve`.
+Use `gh` with an explicit `--repo vimkim/docserve` argument.
 
 - Read issues with `gh issue view NUMBER --json number,title,body,labels,comments`.
 - List issues with `gh issue list --state open --json number,title,body,labels`.
@@ -13,7 +13,6 @@ Use `gh` with an explicit `--repo vimkim/html-serve` argument.
 
 PRs as a request surface: no.
 
-The repository returned HTTP 404 during initial setup on 2026-10-16.
-Keep publication drafts in repository documentation until GitHub access succeeds.
+The previous `vimkim/html-serve` URL redirects to this repository.
 Report publication failures explicitly.
 Repository creation and source pushes require separate user authorization.
