@@ -45,6 +45,21 @@ before(async () => {
     '<img src="figures/architecture.svg" onload="globalThis.previewXss = true">',
     "[Unsafe](javascript:alert(1))", "",
   ].join("\n"));
+  await mkdir(path.join(directory, 'render-previews'), { recursive: true });
+  await writeFile(path.join(directory, 'render-previews/한글 #?.MARKDOWN'), [
+    '# Rendered finder document', '', '| Feature | Result |', '| --- | --- |', '| Preview | Rendered |', '',
+    '![Local figure](figure.svg)', '', 'Inline math: $E = mc^2$', '',
+    '```mermaid', 'flowchart LR', 'A --> B', '```', '',
+    '<script>parent.previewExecuted = true;</script>',
+    '<img src="figure.svg" onload="parent.previewExecuted = true;">',
+  ].join('\n'));
+  await writeFile(path.join(directory, 'render-previews/figure.svg'), svg);
+  await writeFile(path.join(directory, 'render-previews/style.css'), 'body { background: rgb(17, 24, 39); color: white; }');
+  await writeFile(path.join(directory, 'render-previews/한글 #?.HTM'), `<!doctype html><meta charset="utf-8">
+    <link rel="stylesheet" href="style.css"><h1>Rendered finder HTML</h1><img src="figure.svg">
+    <script>window.previewExecuted = true; parent.previewExecuted = true;</script>
+    <img src="figure.svg" onload="window.previewExecuted = true;">
+    <a href="/" target="_top">Leave preview</a>`);
   await writeFile(path.join(directory, "next.markdown"), "# Next heading\n\nYou followed a Markdown link.\n");
   await writeFile(path.join(directory, "broken.md"), [
     "# Surviving content", "", "$\\notARealCommand$", "",
@@ -284,6 +299,67 @@ test("finder previews fuzzy file paths and navigates directories with the keyboa
   } finally { await page.close(); }
 });
 
+for (const width of [1280, 390]) {
+  test(`finder renders Markdown and HTML with relative assets and no preview visits at ${width}px`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    page.setDefaultTimeout(10000);
+    const external = await localOnly(page);
+    try {
+      // Reproduce browsers on plain HTTP that omit Fetch Metadata headers.
+      await page.route('**/*', async route => {
+        const headers = { ...route.request().headers() };
+        for (const name of Object.keys(headers)) if (name.startsWith('sec-fetch-')) delete headers[name];
+        await route.fallback({ headers });
+      });
+      await page.goto(baseURL);
+      await page.getByRole('button', { name: 'Find files', exact: true }).click();
+      const query = page.getByRole('searchbox', { name: 'Search query' });
+      const format = page.getByRole('combobox', { name: 'Preview format' });
+      const frame = page.frameLocator('#finder-preview iframe');
+      await query.fill('render-previews/MARKDOWN');
+      await frame.locator('#content[aria-busy="false"]').waitFor();
+      assert.equal(await frame.getByRole('heading').innerText(), 'Rendered finder document');
+      assert.equal(await frame.locator('table tbody td').first().innerText(), 'Preview');
+      assert.equal(await frame.locator('.katex').count(), 1);
+      assert.equal(await frame.locator('.diagram svg').count(), 1);
+      assert.equal(await frame.locator('.toolbar').isVisible(), false);
+      assert.equal(await frame.locator('#navigation-tools').count(), 0);
+      assert.equal(await frame.getByAltText('Local figure').evaluate(img => img.complete && img.naturalWidth > 0), true);
+      assert.equal(await page.evaluate(() => window.previewExecuted), undefined);
+      assert.match(await page.locator('#finder-preview iframe').getAttribute('src'), /%23%3F\.MARKDOWN/);
+      await format.selectOption('source');
+      assert.match(await page.locator('#finder-preview').innerText(), /# Rendered finder document/);
+      assert.equal(await page.locator('#finder-preview iframe').count(), 0);
+      await format.selectOption('rendered');
+      await frame.getByRole('heading', { name: 'Rendered finder document', exact: true }).waitFor();
+      await query.fill('render-previews/HTM');
+      await frame.getByRole('heading', { name: 'Rendered finder HTML', exact: true }).waitFor();
+      assert.equal(await frame.locator('body').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(17, 24, 39)');
+      assert.equal(await frame.locator('img').first().evaluate(img => img.complete && img.naturalWidth > 0), true);
+      assert.equal(await frame.locator('body').evaluate(() => window.previewExecuted), undefined);
+      assert.equal(await page.evaluate(() => window.previewExecuted), undefined);
+      await frame.getByRole('link', { name: 'Leave preview' }).click();
+      assert.equal(page.url(), baseURL);
+      await format.selectOption('source');
+      assert.match(await page.locator('#finder-preview').innerText(), /<h1>Rendered finder HTML<\/h1>/);
+      await format.selectOption('rendered');
+      await frame.getByRole('heading', { name: 'Rendered finder HTML', exact: true }).waitFor();
+      assert.equal(await page.locator('#finder').evaluate(node => node.scrollWidth <= node.clientWidth), true);
+      if (width === 390) {
+        const resultsBounds = await page.locator('#finder-results').boundingBox();
+        const previewBounds = await page.locator('#finder-preview iframe').boundingBox();
+        assert.ok(previewBounds.height > 100 && previewBounds.width > 100);
+        assert.ok(previewBounds.y > resultsBounds.y);
+      }
+      const recent = await page.request.get(baseURL + '__serve_html__/api/recent?q=render-previews');
+      assert.deepEqual((await recent.json()).results, []);
+      assert.deepEqual(external, []);
+      await query.press('Escape');
+      await page.locator('#finder-preview iframe').waitFor({ state: 'detached' });
+    } finally { await page.close(); }
+  });
+}
+
 test('content finder highlights Unicode matches and exposes scope, hidden files and regex errors', async () => {
   const page = await browser.newPage();
   try {
@@ -292,6 +368,8 @@ test('content finder highlights Unicode matches and exposes scope, hidden files 
     const query = page.getByRole('searchbox', { name: 'Search query' });
     await query.fill('needle.literal');
     await page.getByRole('option').filter({ hasText: 'search-examples/guide.md' }).waitFor();
+    await page.frameLocator('#finder-preview iframe').getByRole('heading', { name: 'Search example', exact: true }).waitFor();
+    await page.getByRole('combobox', { name: 'Preview format' }).selectOption('source');
     await page.waitForFunction(() => document.querySelector('#finder-preview mark')?.textContent === 'Needle.literal');
     assert.equal(await page.locator('#finder-results [role="option"]').count(), 1);
     await page.getByLabel('Include hidden and ignored', { exact: true }).check();
@@ -332,6 +410,7 @@ test('content filename filters include, exclude, report errors and fit desktop a
       assert.deepEqual((await paths.allTextContents()).sort(), ['filename-examples/guide.md', 'filename-examples/한글 #.MD']);
       await page.getByLabel('Regex', { exact: true }).check();
       await waitForCount(2);
+      await page.getByRole('combobox', { name: 'Preview format' }).selectOption('source');
       await page.waitForFunction(() => document.querySelector('#finder-preview mark')?.textContent === 'filename-filter-token');
       assert.equal(await page.locator('#finder').evaluate(element => element.scrollWidth <= element.clientWidth), true);
       if (width === 390) {
@@ -391,7 +470,7 @@ test('recent visits filter files and directories, reopen paths and fit a narrow 
     await page.waitForFunction(() => document.querySelector('#finder-status').textContent === '2 results.');
     const file = page.getByRole('option').filter({ hasText: 'search-examples/guide.md' });
     await file.click();
-    await page.waitForFunction(() => document.querySelector('#finder-preview')?.textContent.includes('# Search example'));
+    await page.frameLocator('#finder-preview iframe').getByRole('heading', { name: 'Search example', exact: true }).waitFor();
     const resultBounds = await page.locator('#finder-results').boundingBox();
     const previewBounds = await page.locator('.finder-preview-pane').boundingBox();
     assert.ok(previewBounds.y > resultBounds.y);
@@ -489,7 +568,7 @@ for (const width of [1280, 390]) {
       assert.equal(await dialog.getByRole('combobox', { name: 'Search scope' }).inputValue(), 'root');
       await query.fill('updates');
       await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
-      await page.waitForFunction(() => document.querySelector('#finder-preview').textContent.includes('<h1>Recently updated HTML</h1>'));
+      await page.frameLocator('#finder-preview iframe').getByRole('heading', { name: 'Recently updated HTML', exact: true }).waitFor();
       assert.equal(await page.evaluate(() => window.previewExecuted), undefined);
       assert.match(await dialog.locator('time').first().textContent(), /^Modified · /);
       assert.ok(await dialog.locator('time').first().getAttribute('datetime'));
@@ -523,12 +602,12 @@ for (const width of [1280, 390]) {
         assert.ok(previewBounds.y > resultsBounds.y);
       }
       await query.press('ArrowDown');
-      await page.waitForFunction(() => document.querySelector('#finder-preview').textContent.includes('# Recently updated example'));
+      await page.frameLocator('#finder-preview iframe').getByRole('heading', { name: 'Recently updated example', exact: true }).waitFor();
       await query.press('Escape');
       assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
       await trigger.click();
       await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
-      await page.waitForFunction(() => document.querySelector('#finder-preview').textContent.includes('<h1>Recently updated HTML</h1>'));
+      await page.frameLocator('#finder-preview iframe').getByRole('heading', { name: 'Recently updated HTML', exact: true }).waitFor();
       await Promise.all([page.waitForURL(baseURL + 'updates/nested/new%20%23.HTML'), query.press('Enter')]);
       await page.frameLocator('#document-frame').getByRole('heading', { name: 'Recently updated HTML' }).waitFor();
       await page.locator('#directory-toggle').click();

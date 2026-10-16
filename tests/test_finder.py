@@ -520,6 +520,27 @@ class FinderTests(unittest.TestCase):
                 self.assertLessEqual(len(result['lines']), 200)
                 self.assertIn(15000, [r['number'] for r in result['lines']])
 
+    def test_renderable_previews_require_supported_complete_utf8_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ('한글 #?.MD', 'guide.markdown', 'page.HTML', 'page.htm', 'plain.txt'):
+                (root / name).write_text('# Heading\n', encoding='utf-8')
+            (root / 'large.md').write_bytes(b'# Heading\n' + b'x' * (2 * 1024 * 1024))
+            (root / 'binary.html').write_bytes(b'<h1>Binary</h1>\x00')
+            (root / 'invalid.md').write_bytes(b'\xff')
+            (root / 'long.md').write_text('# Heading\n' + 'paragraph\n\n' * 300)
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                for name, kind in (('한글 #?.MD', 'markdown'), ('guide.markdown', 'markdown'),
+                                   ('page.HTML', 'html'), ('page.htm', 'html'),
+                                   ('plain.txt', None), ('large.md', None),
+                                   ('binary.html', None), ('invalid.md', None)):
+                    with self.subTest(name=name):
+                        result = self.request_json(urls[0], 'preview', path=name)
+                        self.assertEqual(result.get('render_kind'), kind)
+                result = self.request_json(urls[0], 'preview', path='long.md')
+                self.assertTrue(result['truncated'])
+                self.assertEqual(result['render_kind'], 'markdown')
+
 
 if __name__ == '__main__':
     unittest.main()

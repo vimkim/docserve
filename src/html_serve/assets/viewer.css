@@ -15,6 +15,8 @@ button[aria-pressed="true"] { border-color: var(--link); }
 .markdown-body .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.4em 0; }
 .markdown-body .render-error { color: var(--muted); border-left: 3px solid var(--border); padding-left: 12px; }
 .render-error > summary { cursor: pointer; }
+.docserve-finder-preview .toolbar { display: none; }
+.docserve-finder-preview .markdown-body { min-width: 0; padding: 16px; }
 @media (max-width: 767px) {
   .toolbar { padding: 16px; flex-wrap: wrap; gap: 12px; }
   .markdown-body { padding: 24px 16px 48px; }

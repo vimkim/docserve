@@ -73,7 +73,9 @@ by the CLI, which can be the enclosing Git repository root.
 
 File and directory queries use fuzzy matching against relative paths.
 For example, `docsrev` can match `docs/design-review.md`.
-Click a result to select it and preview its source on the right.
+Click a result to select it and preview it on the right. Markdown and HTML
+render by default. Use **View → Source** to inspect their original text;
+other text files show source directly.
 Use the arrow keys to select another result. Press Enter or click **Open file**
 or **Open directory** to navigate. Escape closes the finder and returns focus
 to its button. The preview appears below the results on narrow screens.
@@ -92,8 +94,9 @@ The finder explains when it is unavailable. File and directory finding and
 normal viewing still work without it. Content queries use literal text and
 smart case: lowercase queries ignore case, while queries with uppercase
 characters are case-sensitive. Select **Regex** for regular expressions.
-Results include matching line numbers, and the preview highlights the selected
-match. Opening a result uses its normal viewer, including rendered Markdown.
+Results include matching line numbers. Select **View → Source** to highlight the
+selected match in Markdown or HTML; other text previews highlight it directly.
+Opening a result uses its normal viewer, including rendered Markdown.
 
 Use **Include filenames (regex)** to search only matching filenames and
 **Exclude filenames (regex)** to skip matching filenames. Both are optional
@@ -113,7 +116,7 @@ files, including uppercase extensions. Clear that field to include all file
 types, or edit it and **Exclude filenames (regex)** to choose other filenames.
 Type a fuzzy path query to narrow the results while keeping modification order.
 Equal modification times sort alphabetically. Results show modification times
-and use the same source preview and open controls as file search.
+and use the same preview and open controls as file search.
 While a search is running, the finder shows an animated progress indicator and
 elapsed time. Recently updated also explains that it is scanning files and
 checking modification times. The indicator does not estimate a percentage.
@@ -127,9 +130,13 @@ lookups each have a three-second execution budget.
 Content search skips files larger than 2 MiB and returns up to 40 matching
 lines per file. The finder reports limited results, skipped large files,
 and invalid patterns. Narrow the query or scope when results are limited.
-Previews show UTF-8 source as text, including HTML, without executing it.
-They read at most 2 MiB and display at most 200 lines and 64 KiB around the
-selected line. Binary files retain their normal open or download action.
+Previews render UTF-8 `.md`, `.markdown`, `.html`, and `.htm` files up to 2 MiB.
+Markdown uses the same sanitized renderer, diagrams, and math as the document
+viewer. HTML retains its styles and relative assets in a sandboxed frame with
+scripts disabled; open the file to use its scripts. Relative assets resolve
+from the selected file's directory. Source previews read at most 2 MiB and
+display at most 200 lines and 64 KiB around the selected line. Larger documents
+fall back to source. Binary files retain their normal open or download action.
 
 **Recently visited** contains the latest 100 distinct files and directories
 opened through browser navigation. Revisiting a path moves it to the top.

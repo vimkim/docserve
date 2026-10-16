@@ -475,6 +475,8 @@ class Finder:
                 data[:FILE_BYTES], final=len(data) <= FILE_BYTES)
         except UnicodeDecodeError:
             return {'lines': [], 'message': 'Preview is available for UTF-8 text files.'}
+        render_kind = {'.md': 'markdown', '.markdown': 'markdown',
+                       '.html': 'html', '.htm': 'html'}.get(selected.suffix.lower())
         source = text.split('\n') if text else []
         if text.endswith('\n'):
             source.pop()
@@ -487,6 +489,7 @@ class Finder:
             if size > PREVIEW_BYTES:
                 break
             lines.append({'number': number, 'text': value, **({'offset': offset} if offset else {})})
-        return {'lines': lines, 'truncated': len(data) > FILE_BYTES or first > 0
+        return {'lines': lines, 'render_kind': render_kind if len(data) <= FILE_BYTES else None,
+                'truncated': len(data) > FILE_BYTES or first > 0
                 or first + len(lines) < len(source) or any(len(s) > 4000 for s in source),
                 'message': 'Empty file.' if not source else ''}

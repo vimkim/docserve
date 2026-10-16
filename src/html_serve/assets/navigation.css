@@ -32,9 +32,14 @@
 .finder-snippet { margin-top: 5px; font: 12px ui-monospace, monospace; color: #59636e; white-space: pre-wrap; }
 .finder-preview-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; gap: 8px; }
 .finder-preview-heading { font-size: 13px; }
+.finder-preview-actions, #finder-preview-format-label { display: flex; align-items: center; gap: 8px; }
+.finder-preview-actions { flex-shrink: 0; }
+#finder-preview-format { padding: 4px; }
 #finder-path { overflow-wrap: anywhere; }
 #finder-open { flex-shrink: 0; }
 #finder-preview { flex: 1; overflow: auto; font: 13px/1.6 ui-monospace, monospace; }
+#finder-preview.finder-rendered { overflow: hidden; }
+#finder-preview iframe { display: block; box-sizing: border-box; width: 100%; height: 100%; border: 1px solid #d1d9e0; border-radius: 6px; background: #fff; }
 .finder-line { display: grid; grid-template-columns: 4em minmax(0, 1fr); min-height: 1.6em; }
 .finder-line-number { color: #59636e; text-align: right; padding-right: 10px; user-select: none; }
 .finder-line code { white-space: pre-wrap; overflow-wrap: anywhere; }

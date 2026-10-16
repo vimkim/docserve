@@ -41,7 +41,10 @@ tools.innerHTML = `
     <div class="finder-panes">
       <ul id="finder-results" role="listbox" aria-label="Search results" tabindex="0"></ul>
       <section class="finder-preview-pane" aria-label="File preview">
-        <div class="finder-preview-heading"><span id="finder-path"></span><a id="finder-open" hidden>Open</a></div>
+        <div class="finder-preview-heading"><span id="finder-path"></span><div class="finder-preview-actions">
+          <label id="finder-preview-format-label" hidden>View <select id="finder-preview-format" aria-label="Preview format"><option value="rendered">Rendered</option><option value="source">Source</option></select></label>
+          <a id="finder-open" hidden>Open</a>
+        </div></div>
         <p id="finder-preview-status" role="status"></p><div id="finder-preview"></div>
       </section>
     </div>
@@ -57,6 +60,8 @@ const progress = document.getElementById("finder-progress");
 const elapsed = document.getElementById("finder-elapsed");
 const preview = document.getElementById("finder-preview");
 const previewStatus = document.getElementById("finder-preview-status");
+const previewFormat = document.getElementById("finder-preview-format");
+const previewFormatLabel = document.getElementById("finder-preview-format-label");
 const openLink = document.getElementById("finder-open");
 const scope = document.getElementById("finder-scope");
 const include = document.getElementById("finder-include");
@@ -70,6 +75,7 @@ const filenameFilters = {
 };
 let mode = "files", results = [], selected = -1, generation = 0, previewGeneration = 0;
 let opener, searchAbort, previewAbort, timer, progressTimer;
+let currentPreview;
 
 function stopProgress() {
   clearInterval(progressTimer);
@@ -102,6 +108,9 @@ function resetPreview() {
   previewAbort?.abort();
   previewGeneration += 1;
   preview.replaceChildren();
+  preview.classList.remove("finder-rendered");
+  currentPreview = undefined;
+  previewFormatLabel.hidden = true;
   previewStatus.textContent = "";
   document.getElementById("finder-path").textContent = "";
   openLink.hidden = true;
@@ -124,6 +133,50 @@ function matchText(element, text, ranges, firstByte = 0) {
   }
   element.append(decode.decode(bytes.slice(offset)));
 }
+
+function renderPreview() {
+  if (!currentPreview) return;
+  const { data, result } = currentPreview;
+  preview.replaceChildren();
+  const rendered = data.render_kind && previewFormat.value === "rendered";
+  preview.classList.toggle("finder-rendered", Boolean(rendered));
+  if (rendered) {
+    const frame = document.createElement("iframe");
+    frame.title = `Preview of ${result.path}`;
+    frame.dataset.docservePreview = "";
+    // Markdown uses our sanitized viewer. HTML keeps its styles and assets,
+    // while the sandbox prevents author scripts, popups, and top navigation.
+    if (data.render_kind === "html") frame.setAttribute("sandbox", "allow-same-origin");
+    const url = new URL(result.url, location.href);
+    url.searchParams.set("__docserve_standalone", "1");
+    frame.src = url.href;
+    previewStatus.textContent = "Loading preview…";
+    frame.addEventListener("load", () => {
+      if (preview.contains(frame)) previewStatus.textContent = result.line
+        ? "Select Source to see the highlighted match." : "";
+    });
+    preview.append(frame);
+    return;
+  }
+  for (const line of data.lines) {
+    const row = document.createElement("div");
+    row.className = "finder-line";
+    const number = document.createElement("span");
+    number.className = "finder-line-number";
+    number.textContent = line.number;
+    const code = document.createElement("code");
+    if (line.number === result.line) {
+      row.classList.add("finder-match");
+      matchText(code, line.text, result.matches || [], line.offset || 0);
+    } else code.textContent = line.text;
+    row.append(number, code);
+    preview.append(row);
+  }
+  previewStatus.textContent = data.message || (data.truncated ? "Showing part of this file." : "");
+  preview.querySelector(".finder-match")?.scrollIntoView({ block: "nearest" });
+}
+
+previewFormat.addEventListener("change", renderPreview);
 
 async function select(index) {
   if (!results.length) return;
@@ -153,22 +206,9 @@ async function select(index) {
       url: result.url, line: result.line || 1, column: result.matches?.[0]?.start || 0,
     }, previewAbort.signal);
     if (current !== previewGeneration) return;
-    for (const line of data.lines) {
-      const row = document.createElement("div");
-      row.className = "finder-line";
-      const number = document.createElement("span");
-      number.className = "finder-line-number";
-      number.textContent = line.number;
-      const code = document.createElement("code");
-      if (line.number === result.line) {
-        row.classList.add("finder-match");
-        matchText(code, line.text, result.matches || [], line.offset || 0);
-      } else code.textContent = line.text;
-      row.append(number, code);
-      preview.append(row);
-    }
-    previewStatus.textContent = data.message || (data.truncated ? "Showing part of this file." : "");
-    preview.querySelector(".finder-match")?.scrollIntoView({ block: "nearest" });
+    currentPreview = { data, result };
+    previewFormatLabel.hidden = !data.render_kind;
+    renderPreview();
   } catch (error) {
     if (error.name !== "AbortError" && current === previewGeneration) previewStatus.textContent = error.message;
   }

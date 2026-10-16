@@ -25,7 +25,9 @@ function label(value) {
   try { return decodeURIComponent(value); } catch { return value; }
 }
 
-if (frame && window.parent !== window) {
+if (window.frameElement?.hasAttribute("data-docserve-preview")) {
+  document.documentElement.classList.add("docserve-finder-preview");
+} else if (frame && window.parent !== window) {
   // Plain HTTP LAN browsers can omit Fetch Metadata. Both our document frame
   // and an author's supporting frames must recover the original HTML page.
   location.replace(originalURL(location.href));
