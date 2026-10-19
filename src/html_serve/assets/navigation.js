@@ -218,7 +218,8 @@ async function search(current) {
   searchAbort = new AbortController();
   try {
     const data = await api(mode === "recent" ? "recent" : "search", {
-      mode, q: query.value, scope_url: scope.value === "current" ? tools.dataset.scopeUrl || location.pathname : "/",
+      mode, q: query.value, scope_url: tools.dataset.scopeUrl || location.pathname,
+      root: scope.value === "current" ? "0" : "1",
       include: include.checked ? "1" : "0", regex: regex.checked ? "1" : "0",
       filename: filenameFilters[mode] ? filename.value : "",
       exclude_filename: filenameFilters[mode] ? excludeFilename.value : "", kind: recentKind.value,

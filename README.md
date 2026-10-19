@@ -12,6 +12,7 @@ free port, links for your network, and the surrounding files to explore.
 > [!WARNING]
 > **Development use only. Do not use docserve for production serving.**
 > Passing a file or directory can expose its entire Git repository, including hidden or sensitive files.
+> Each `--allow-root DIR` also exposes that directory and its descendants.
 > Symbolic links can expose files outside the serving directory.
 > The server binds to all IPv4 interfaces by default and has no authentication or TLS.
 > Anyone who can reach the server may read the served files. Use only on trusted development networks.
@@ -128,11 +129,16 @@ check. See [setup, exit codes, and guarantees](docs/guide.md#mermaid-checks).
 docserve                     # Browse the current directory
 docserve docs/review.md      # Read Markdown, with its Git project as the root
 docserve output/report.html  # Open HTML with its surrounding assets
+docserve docs/review.md --allow-root ~/my-cubrid  # Follow absolute links into another directory
 ```
 
 Run the command in your SSH terminal, then open a printed URL in your computer's
 browser. The command stays in the foreground. In my workflow, an agent skill
 suggests the command. You can also run it directly.
+
+Absolute filesystem links within the serving root work automatically. Add
+`--allow-root DIR` for links into other directories; repeat it for multiple roots.
+See [absolute filesystem links](docs/guide.md#absolute-filesystem-links).
 
 ## Read more
 

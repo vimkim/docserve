@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -25,9 +26,11 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 if __package__:
     from .finder import Finder, FinderError
     from .history import VisitHistory
+    from .paths import DocumentRoots
 else:
     from finder import Finder, FinderError
     from history import VisitHistory
+    from paths import DocumentRoots
 
 
 VPN_PREFIXES = ("tailscale", "tun", "tap", "wg", "ppp", "vpn", "zt")
@@ -260,11 +263,13 @@ Creation dates are unavailable when the filesystem does not provide them.</p>
 class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
     """List directories and render Markdown at its original URL."""
 
-    def __init__(self, *args, verbose=False, finder=None, history=None, **kwargs):
+    def __init__(self, *args, verbose=False, finder=None, history=None, roots=None, **kwargs):
         self.verbose = verbose
-        self.finder = finder or Finder(kwargs.get('directory', os.getcwd()))
-        self.history = history or VisitHistory(kwargs.get('directory', os.getcwd()))
+        self.roots = roots or DocumentRoots(kwargs.get('directory', os.getcwd()), finder=finder, history=history)
+        self.finder = self.roots.primary.finder
+        self.history = self.roots.primary.history
         self.response_status = None
+        kwargs['directory'] = str(self.roots.primary.directory)
         super().__init__(*args, **kwargs)
 
     def send_response(self, code, message=None):
@@ -278,6 +283,11 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
     def log_error(self, format, *args):
         self.log_message('%s — "%s"', format % args, self.requestline)
 
+    def translate_path(self, path):
+        if self.roots.is_mounted(path):
+            return str(self.roots.navigation(path)[1])
+        return super().translate_path(path)
+
     def list_directory(self, path):
         diagnostic = (lambda message: self.log_message("%s", message)) if self.verbose else None
         try:
@@ -290,8 +300,10 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         sort_mode = values[0] if values in (["title"], ["created"], ["modified"]) else "modified"
         orders = parse_qs(request.query, keep_blank_values=True).get("order")
         sort_order = orders[0] if orders in (["asc"], ["desc"]) else None
+        root = (self.roots.navigation(self.path)[0] if self.roots.is_mounted(self.path)
+                else self.roots.primary)
         encoded = render_directory(entries, request.path, sort_mode, sort_order=sort_order,
-                                   has_parent=os.path.abspath(path) != os.path.abspath(self.directory),
+                                   has_parent=os.path.abspath(path) != os.path.abspath(root.directory),
                                    server_directory=path)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -341,14 +353,23 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 navigation = False
         if (self.command == 'GET' and navigation and self.response_status in (200, 304)
                 and not request.path.startswith(PREVIEW_PREFIX)):
+            root = (self.roots.navigation(self.path)[0] if self.roots.is_mounted(self.path)
+                    else self.roots.primary)
             path = Path(self.translate_path(self.path))
-            relative = path.relative_to(Path(self.directory)).as_posix()
-            self.history.record('' if relative == '.' else relative,
-                                'directory' if path.is_dir() else 'file')
+            relative = path.relative_to(root.directory).as_posix()
+            relative = '' if relative == '.' else relative
+            root.history.record(relative, 'directory' if path.is_dir() else 'file')
         super().end_headers()
 
     def send_head(self):
         self.html_response = False
+        try:
+            return self.document_response()
+        except (ValueError, OSError, RuntimeError) as error:
+            self.send_error(getattr(error, 'status', 400), 'Cannot serve this path', explain=str(error))
+            return None
+
+    def document_response(self):
         request = urlsplit(self.path)
         if request.path.startswith(PREVIEW_PREFIX + 'api/'):
             return self.finder_api(request)
@@ -363,6 +384,20 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
             return self.preview_file(path)
 
         path = Path(self.translate_path(self.path))
+        if not path.exists() and not self.roots.is_mounted(self.path):
+            absolute = self.roots.absolute_url(self.path)
+            if absolute and absolute != self.path:
+                self.send_response(302)
+                self.send_header('Location', absolute)
+                self.send_header('Content-Length', '0')
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                return None
+            parent = str(PurePosixPath(unquote(request.path)).parent)
+            hint = shlex.quote(parent) if parent != '/' else 'DIR'
+            self.send_error(404, 'File not found', explain='If this is an absolute filesystem link, '
+                            f'restart docserve with --allow-root {hint}')
+            return None
         if path.is_dir():
             if not request.path.endswith(("/", "%2f", "%2F")):
                 self.send_response(301)
@@ -418,21 +453,14 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         return super().send_head()
 
     def navigation_path(self, url):
-        """Resolve an ordinary served URL, retaining direct-link symlink behavior."""
-        request = urlsplit(url)
-        decoded = unquote(request.path, errors='surrogatepass')
-        parts = PurePosixPath(decoded).parts[1:]
-        if (request.scheme or request.netloc or not decoded.startswith('/')
-                or '..' in parts or '\x00' in decoded or decoded.startswith(PREVIEW_PREFIX)):
-            raise FinderError('Path must be a document URL inside the serving root.')
-        relative = '/'.join(parts)
-        return Path(self.directory).joinpath(*parts), relative
+        _, path, relative = self.roots.navigation(url)
+        return path, relative
 
     def navigation_directory(self, url):
-        path, relative = self.navigation_path(url)
+        root, path, relative = self.roots.navigation(url)
         if not path.is_dir():
             raise FinderError('Directory was not found.', 404)
-        base = '/' + quote(relative, safe='/', errors='surrogatepass') + ('/' if relative else '')
+        base = root.url(relative, directory=True)
         entries = []
         with os.scandir(path) as children:
             for child in children:
@@ -472,10 +500,10 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict) or not isinstance(data.get('url'), str):
                 raise FinderError('Expected a document URL.')
-            path, relative = self.navigation_path(data['url'])
+            root, path, relative = self.roots.navigation(data['url'])
             if not (path.is_file() or path.is_dir()):
                 raise FinderError('Visited path was not found.', 404)
-            self.history.record(relative, 'directory' if path.is_dir() else 'file')
+            root.history.record(relative, 'directory' if path.is_dir() else 'file')
             stream = self.json_response({'recorded': True})
         except (ValueError, OSError) as error:
             stream = self.json_response({'error': str(error)}, getattr(error, 'status', 400))
@@ -491,16 +519,24 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         try:
             endpoint = request.path.removeprefix(PREVIEW_PREFIX + 'api/')
             if endpoint == 'search':
-                scope = value('scope') if 'scope' in query else unquote(value('scope_url', '/'), errors='surrogatepass')
-                result = self.finder.search(value('mode', 'files'), value('q'), scope,
+                root, _, scope = self.roots.navigation(value('scope_url', '/'))
+                if 'scope' in query:
+                    scope = value('scope')
+                elif value('root') == '1':
+                    scope = ''
+                result = root.finder.search(value('mode', 'files'), value('q'), scope,
                                             value('include') == '1', value('regex') == '1',
                                             value('filename') if 'filename' in query else None,
                                             value('exclude_filename'))
+                result = self.roots.result_urls(root, result)
             elif endpoint == 'preview':
-                path = value('path') if 'path' in query else unquote(value('url'), errors='surrogatepass')
-                result = self.finder.preview(path, int(value('line', '1')), int(value('column', '0')))
+                root, _, path = self.roots.navigation(value('url', '/'))
+                if 'path' in query:
+                    path = value('path')
+                result = root.finder.preview(path, int(value('line', '1')), int(value('column', '0')))
             elif endpoint == 'recent':
-                result = self.history.recent(value('q'), value('kind', 'all'))
+                root, _, _ = self.roots.navigation(value('scope_url', '/'))
+                result = self.roots.result_urls(root, root.history.recent(value('q'), value('kind', 'all')))
             elif endpoint == 'directory':
                 result = self.navigation_directory(value('url', '/'))
             elif endpoint == 'path':
@@ -733,6 +769,8 @@ def main():
                         help="directory to serve instead of PATH (default: current directory)")
     parser.add_argument("-f", "--file",
                         help="file relative to the serving directory; may accompany a directory PATH (default: listing)")
+    parser.add_argument("--allow-root", action="append", default=[], metavar="DIR",
+                        help="also serve absolute filesystem links inside DIR (repeatable; exposes its files)")
     parser.add_argument("--port", type=port_number, default=0,
                         help="use a fixed port; 0 prefers memorable four-digit ports (default: 0)")
     parser.add_argument("--interface", help="print links for only this active interface")
@@ -741,9 +779,10 @@ def main():
     args = parser.parse_args()
     try:
         directory, selected_path = serving_target(args.path, args.directory, args.file)
+        roots = DocumentRoots(directory, args.allow_root)
         addresses = addresses_for_bind(args.bind, args.interface)
         handler = partial(PreviewHTTPRequestHandler, directory=str(directory), verbose=args.verbose,
-                          finder=Finder(directory), history=VisitHistory(directory))
+                          roots=roots)
         with create_server(args.bind, args.port, handler) as server:
             print_links(directory, server.server_port, selected_path, addresses)
             server.serve_forever()

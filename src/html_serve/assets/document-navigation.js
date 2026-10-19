@@ -240,7 +240,7 @@ function initialize() {
     try {
       const [data, history] = await Promise.all([
         api("directory", { url: browsingURL.pathname }, signal),
-        api("recent", {}, signal).catch(error => { if (error.name === "AbortError") throw error; return { results: [] }; }),
+        api("recent", { scope_url: browsingURL.pathname }, signal).catch(error => { if (error.name === "AbortError") throw error; return { results: [] }; }),
       ]);
       if (current !== generation) return;
       directoryData = data;

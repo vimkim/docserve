@@ -840,7 +840,7 @@ class ServeHTML(unittest.TestCase):
             (directory / "bin").mkdir()
             script = directory / "bin" / "serve-html.py"
             script.write_bytes(SCRIPT.read_bytes())
-            for module in ('finder.py', 'history.py'):
+            for module in ('finder.py', 'history.py', 'paths.py'):
                 (script.parent / module).write_bytes((SCRIPT.parent / module).read_bytes())
             client = build_opener(ProxyHandler({}))
             with self.server(directory, "--bind", "127.0.0.1",

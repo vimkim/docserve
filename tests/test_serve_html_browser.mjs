@@ -16,11 +16,12 @@ const { chromium } = require("playwright");
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60"><rect width="160" height="60" fill="#0969da"/><text x="15" y="35" fill="white">External SVG</text></svg>';
 const filename = "한글 review #1's ?.MD";
 const htmlFilename = 'review # 한?.HTML';
-let directory, cacheDirectory, server, images, browser, baseURL;
+let directory, extraDirectory, cacheDirectory, server, images, browser, baseURL;
 let serverOutput = "";
 
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-"));
+  extraDirectory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-extra-"));
   cacheDirectory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-cache-"));
   await mkdir(path.join(directory, "nested/figures"), { recursive: true });
   images = http.createServer((request, response) => {
@@ -67,6 +68,21 @@ before(async () => {
     "```mermaid", "flowchart LR", "A --> B", "```", "", "Final paragraph.",
   ].join("\n"));
   await writeFile(path.join(directory, "plain.md"), "# Plain document\n\nNo diagrams or equations.\n");
+  await mkdir(path.join(extraDirectory, 'docs'), { recursive: true });
+  const absoluteMarkdown = path.join(extraDirectory, 'docs/한글 #?.md');
+  const absoluteHTML = path.join(extraDirectory, 'docs/page.html');
+  await writeFile(path.join(extraDirectory, 'docs/figure.svg'), svg);
+  await writeFile(path.join(extraDirectory, 'docs/style.css'), 'body { background: rgb(17, 24, 39); color: white; }');
+  await writeFile(absoluteMarkdown, '# Extra Markdown\n\n![Extra figure](figure.svg)\n\n[Next page](next.md)\n');
+  await writeFile(path.join(extraDirectory, 'docs/next.md'), '# Extra next page\n');
+  await writeFile(path.join(extraDirectory, 'other.md'), '# Extra root document\n');
+  await writeFile(absoluteHTML, `<!doctype html><title>Extra HTML</title>
+    <link rel="stylesheet" href="style.css"><h1 id="target">Extra HTML</h1><img src="figure.svg">
+    <script>window.extraScript = true;</script><a href="${encodeURI(absoluteMarkdown).replaceAll('#', '%23').replaceAll('?', '%3F')}">Extra Markdown</a>`);
+  const extraHTMLURL = encodeURI(absoluteHTML);
+  await writeFile(path.join(directory, 'absolute.md'), `# Absolute links\n\n[Project document](${encodeURI(path.join(directory, 'plain.md'))})\n\n[Extra document](${extraHTMLURL}?keep=%20&other=%2B#target)\n\n![Absolute figure](${encodeURI(path.join(extraDirectory, 'docs/figure.svg'))})`);
+  await writeFile(path.join(directory, 'absolute.html'), `<h1>Absolute HTML links</h1>
+    <a href="${extraHTMLURL}?keep=%20&amp;other=%2B#target">Extra document</a>`);
   await writeFile(path.join(directory, "existing.html"), "<!doctype html><title>Existing HTML</title><h1>Original page</h1>");
   await writeFile(path.join(directory, "index.html"), "<!doctype html><title>Selected index</title><h1>Root index page</h1>");
   await writeFile(path.join(directory, "nested/index.htm"), "<!doctype html><title>Selected nested index</title><h1>Nested index page</h1>");
@@ -103,7 +119,7 @@ before(async () => {
 
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
-    "--directory", directory, "--bind", "127.0.0.1"], {
+    "--directory", directory, "--allow-root", extraDirectory, "--bind", "127.0.0.1"], {
     stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, XDG_CACHE_HOME: cacheDirectory },
   });
   server.stdout.on("data", (data) => { serverOutput += data; });
@@ -129,6 +145,7 @@ after(async () => {
   }
   if (images?.listening) await new Promise((resolve) => images.close(resolve));
   if (directory) await rm(directory, { recursive: true, force: true });
+  if (extraDirectory) await rm(extraDirectory, { recursive: true, force: true });
   if (cacheDirectory) await rm(cacheDirectory, { recursive: true, force: true });
 });
 
@@ -921,6 +938,75 @@ test("a failed theme script leaves a light preview and hides the inactive toggle
     await ready(page);
     assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(255, 255, 255)");
     assert.equal(await page.locator("#theme-toggle").isVisible(), false);
+  } finally { await page.close(); }
+});
+
+test('Markdown absolute project links and absolute image paths resolve automatically', async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  try {
+    await page.goto(baseURL + 'absolute.md');
+    await ready(page);
+    assert.equal(await page.getByAltText('Absolute figure').evaluate(img => img.complete && img.naturalWidth > 0), true);
+    await page.getByRole('link', { name: 'Project document', exact: true }).click();
+    await ready(page);
+    await page.waitForURL(baseURL + 'plain.md');
+    assert.equal(await page.getByRole('heading', { name: 'Plain document', exact: true }).count(), 1);
+  } finally { await page.close(); }
+});
+
+test('absolute links from Markdown and framed HTML retain queries, fragments, Back and Forward', { timeout: 30000 }, async () => {
+  for (const source of ['absolute.md', 'absolute.html']) {
+    const page = await browser.newPage();
+    page.setDefaultTimeout(5000);
+    const child = page.frameLocator('#document-frame');
+    try {
+      await page.goto(baseURL + source);
+      if (source.endsWith('.md')) await ready(page);
+      const document = source.endsWith('.md') ? page : child;
+      await document.getByRole('link', { name: 'Extra document', exact: true }).click();
+      await child.getByRole('heading', { name: 'Extra HTML', exact: true }).waitFor();
+      await page.waitForURL(url => url.pathname.startsWith('/__docserve_fs__/') && url.hash === '#target');
+      assert.equal(new URL(page.url()).search, '?keep=%20&other=%2B');
+      assert.equal(await child.locator('body').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(17, 24, 39)');
+      assert.equal(await child.locator('body').evaluate(() => window.extraScript), true);
+      assert.equal(await child.locator('img').evaluate(img => img.complete && img.naturalWidth > 0), true);
+      const mountedHTML = page.url();
+      await page.goBack();
+      await page.waitForURL(baseURL + source);
+      await page.goForward();
+      await page.waitForURL(mountedHTML);
+      await child.getByRole('link', { name: 'Extra Markdown', exact: true }).click();
+      await child.locator('#content[aria-busy="false"]').waitFor();
+      await page.waitForURL(url => url.pathname.endsWith('/' + encodeURIComponent('한글 #?.md')));
+      assert.equal(await child.getByAltText('Extra figure').evaluate(img => img.complete && img.naturalWidth > 0), true);
+      await child.getByRole('link', { name: 'Next page', exact: true }).click();
+      await child.getByRole('heading', { name: 'Extra next page', exact: true }).waitFor();
+      await page.waitForURL(url => url.pathname.endsWith('/docs/next.md'));
+      await page.getByRole('button', { name: 'Directory listing', exact: true }).first().click();
+      const pane = page.locator('#document-directory');
+      await pane.getByRole('link', { name: 'page.html', exact: true }).waitFor();
+      assert.equal(await pane.locator('#directory-status').innerText(), '');
+      await pane.getByRole('button', { name: 'Find files', exact: true }).click();
+      await page.getByRole('searchbox', { name: 'Search query', exact: true }).fill('other');
+      await page.locator('#finder-results [role="option"]').filter({ hasText: 'other.md' }).waitFor();
+      await page.locator('#finder-close').click();
+      await pane.getByRole('button', { name: 'Parent directory', exact: true }).click();
+      await pane.getByRole('link', { name: 'other.md', exact: true }).waitFor();
+      assert.equal(await pane.getByRole('button', { name: 'Parent directory', exact: true }).isDisabled(), true);
+    } finally { await page.close(); }
+  }
+});
+
+test('standalone HTML follows absolute links into an allowed directory', async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  try {
+    await page.goto(baseURL + 'absolute.html?__docserve_standalone=1');
+    assert.equal(await page.locator('#document-frame').count(), 0);
+    await page.getByRole('link', { name: 'Extra document', exact: true }).click();
+    await page.frameLocator('#document-frame').getByRole('heading', { name: 'Extra HTML', exact: true }).waitFor();
+    await page.waitForURL(url => url.pathname.startsWith('/__docserve_fs__/') && url.hash === '#target');
   } finally { await page.close(); }
 });
 

@@ -8,6 +8,11 @@ docserve lets a reader browse a served directory tree and open its documents.
 The directory at the top of the tree exposed by one running html-serve server.
 _Avoid_: Filesystem root, repository root (unless it is also the serving root)
 
+**Allowed root**:
+An additional directory explicitly exposed with `--allow-root DIR` so absolute
+filesystem links into it can open. It has its own document URLs, finder scope,
+and visit history; the serving root remains the main directory at `/`.
+
 **Directory listing**:
 The page that shows the immediate files and subdirectories of a served directory.
 _Avoid_: Files (as the navigation label for this page)
