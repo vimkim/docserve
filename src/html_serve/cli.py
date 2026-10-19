@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shlex
 import stat
 import subprocess
 import sys
@@ -26,11 +25,11 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 if __package__:
     from .finder import Finder, FinderError
     from .history import VisitHistory
-    from .paths import DocumentRoots
+    from .paths import DocumentRoots, path_serving_target
 else:
     from finder import Finder, FinderError
     from history import VisitHistory
-    from paths import DocumentRoots
+    from paths import DocumentRoots, path_serving_target
 
 
 VPN_PREFIXES = ("tailscale", "tun", "tap", "wg", "ppp", "vpn", "zt")
@@ -393,10 +392,7 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 self.send_header('Cache-Control', 'no-store')
                 self.end_headers()
                 return None
-            parent = str(PurePosixPath(unquote(request.path)).parent)
-            hint = shlex.quote(parent) if parent != '/' else 'DIR'
-            self.send_error(404, 'File not found', explain='If this is an absolute filesystem link, '
-                            f'restart docserve with --allow-root {hint}')
+            self.send_error(404, 'File not found')
             return None
         if path.is_dir():
             if not request.path.endswith(("/", "%2f", "%2F")):
@@ -618,25 +614,6 @@ def review_file(directory, filename):
     return directory, quote(relative.as_posix(), safe="/")
 
 
-def path_serving_target(target):
-    """Use a positional path's Git root, falling back to its containing directory."""
-    is_directory = target.is_dir()
-    parent = target.resolve() if is_directory else target.parent.resolve()
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(parent), "rev-parse", "--show-toplevel"],
-            check=True, capture_output=True, text=True, timeout=5,
-        )
-        root = Path(result.stdout.rstrip("\n"))
-        if root.is_absolute():
-            # Resolve directory aliases, but preserve the selected file's symlink name.
-            selected = parent if is_directory else parent / target.name
-            return root, selected.relative_to(root)
-    except (OSError, subprocess.SubprocessError, ValueError):
-        pass
-    return (target, Path(".")) if is_directory else (target.parent, Path(target.name))
-
-
 def serving_target(path=None, directory=None, filename=None):
     """Resolve a positional file/directory or an explicit root and relative file."""
     if path is not None:
@@ -770,7 +747,7 @@ def main():
     parser.add_argument("-f", "--file",
                         help="file relative to the serving directory; may accompany a directory PATH (default: listing)")
     parser.add_argument("--allow-root", action="append", default=[], metavar="DIR",
-                        help="also serve absolute filesystem links inside DIR (repeatable; exposes its files)")
+                        help="set a document root for absolute filesystem links (optional; repeatable)")
     parser.add_argument("--port", type=port_number, default=0,
                         help="use a fixed port; 0 prefers memorable four-digit ports (default: 0)")
     parser.add_argument("--interface", help="print links for only this active interface")

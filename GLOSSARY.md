@@ -8,10 +8,16 @@ docserve lets a reader browse a served directory tree and open its documents.
 The directory at the top of the tree exposed by one running html-serve server.
 _Avoid_: Filesystem root, repository root (unless it is also the serving root)
 
+**Document root**:
+An additional directory used for documents opened through absolute filesystem
+links. It is selected automatically from the destination's Git root or containing
+directory, or configured with `--allow-root DIR`. It has its own document URLs,
+finder scope, and visit history; the serving root remains the main directory at `/`.
+
 **Allowed root**:
-An additional directory explicitly exposed with `--allow-root DIR` so absolute
-filesystem links into it can open. It has its own document URLs, finder scope,
-and visit history; the serving root remains the main directory at `/`.
+A document root explicitly configured with `--allow-root DIR`. This option
+chooses a directory boundary for navigation; it does not restrict access to
+other absolute filesystem paths.
 
 **Directory listing**:
 The page that shows the immediate files and subdirectories of a served directory.

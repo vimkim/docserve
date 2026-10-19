@@ -1,6 +1,6 @@
 // Run with: npm --prefix tools/serve-html-assets test
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import http from "node:http";
@@ -22,6 +22,7 @@ let serverOutput = "";
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-"));
   extraDirectory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-extra-"));
+  execFileSync('git', ['init', '-q', extraDirectory]);
   cacheDirectory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-cache-"));
   await mkdir(path.join(directory, "nested/figures"), { recursive: true });
   images = http.createServer((request, response) => {
@@ -119,7 +120,7 @@ before(async () => {
 
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
-    "--directory", directory, "--allow-root", extraDirectory, "--bind", "127.0.0.1"], {
+    "--directory", directory, "--bind", "127.0.0.1"], {
     stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, XDG_CACHE_HOME: cacheDirectory },
   });
   server.stdout.on("data", (data) => { serverOutput += data; });
@@ -998,7 +999,7 @@ test('absolute links from Markdown and framed HTML retain queries, fragments, Ba
   }
 });
 
-test('standalone HTML follows absolute links into an allowed directory', async () => {
+test('standalone HTML follows absolute links into another repository without configuration', async () => {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
   try {

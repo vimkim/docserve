@@ -12,11 +12,12 @@ free port, links for your network, and the surrounding files to explore.
 > [!WARNING]
 > **Development use only. Do not use docserve for production serving.**
 > Passing a file or directory can expose its entire Git repository, including hidden or sensitive files.
-> Each `--allow-root DIR` also exposes that directory and its descendants.
+> Absolute filesystem URLs can also read files and browse directories outside that root, without extra flags.
+> Any file readable by the server process can be exposed, including hidden or sensitive files.
 > Symbolic links can expose files outside the serving directory.
 > The server binds to all IPv4 interfaces by default and has no authentication or TLS.
 > Anyone who can reach the server may read the served files. Use only on trusted development networks.
-> Use `-d` to choose a dedicated output directory, or `--bind 127.0.0.1` with an SSH tunnel for local access.
+> Use `--bind 127.0.0.1` with an SSH tunnel for local access. `-d` chooses the main directory; it does not restrict absolute filesystem access.
 
 ## Why I built this
 
@@ -129,15 +130,15 @@ check. See [setup, exit codes, and guarantees](docs/guide.md#mermaid-checks).
 docserve                     # Browse the current directory
 docserve docs/review.md      # Read Markdown, with its Git project as the root
 docserve output/report.html  # Open HTML with its surrounding assets
-docserve docs/review.md --allow-root ~/my-cubrid  # Follow absolute links into another directory
 ```
 
 Run the command in your SSH terminal, then open a printed URL in your computer's
 browser. The command stays in the foreground. In my workflow, an agent skill
 suggests the command. You can also run it directly.
 
-Absolute filesystem links within the serving root work automatically. Add
-`--allow-root DIR` for links into other directories; repeat it for multiple roots.
+Absolute filesystem links work automatically, including links into other
+repositories. The destination's Git root keeps relative links and assets accessible.
+`--allow-root DIR` optionally chooses a specific directory root for those links.
 See [absolute filesystem links](docs/guide.md#absolute-filesystem-links).
 
 ## Read more

@@ -16,6 +16,93 @@ import test_serve_html as existing
 class AbsoluteLinkTests(unittest.TestCase):
     server = existing.ServeHTML.server
 
+    def test_external_absolute_links_work_without_configuration_and_survive_restart(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, extra = Path(temp) / 'schedule', Path(temp) / 'other repository'
+            root.mkdir()
+            (extra / 'docs').mkdir(parents=True)
+            subprocess.run(['git', 'init', '-q', str(extra)], check=True)
+            document = extra / 'docs' / 'briefing 한글 #?.md'
+            document.write_text('# Briefing\n\n![Figure](../figure.svg)\n')
+            (extra / 'figure.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+            (extra / 'other.md').write_text('# Another document')
+            (root / 'today.md').write_text(f'[Briefing](<{document}>)')
+            client = build_opener(ProxyHandler({}))
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                base = urls[0].rstrip('/')
+                url = base + quote(str(document), safe='/') + '?raw=1&keep=%20'
+                with client.open(Request(url, headers={'Sec-Fetch-Dest': 'document'})) as response:
+                    mounted = urlsplit(response.url).path
+                    self.assertTrue(mounted.startswith('/__docserve_fs__/'))
+                    self.assertEqual(urlsplit(response.url).query, 'raw=1&keep=%20')
+                    self.assertEqual(response.read().decode(), document.read_text())
+                with client.open(Request(url, method='HEAD')) as response:
+                    self.assertEqual(response.read(), b'')
+                    self.assertEqual(int(response.headers['Content-Length']), document.stat().st_size)
+                mount = mounted.split('/docs/')[0] + '/'
+                with client.open(base + mount + 'figure.svg') as response:
+                    self.assertEqual(response.headers.get_content_type(), 'image/svg+xml')
+                with client.open(base + '/__serve_html__/api/directory?' + urlencode({'url': mount})) as response:
+                    listing = json.load(response)
+                    self.assertIsNone(listing['parent'])
+                    self.assertIn('other.md', {entry['name'] for entry in listing['entries']})
+                with client.open(base + '/__serve_html__/api/recent?' + urlencode({'scope_url': mount})) as response:
+                    self.assertEqual(json.load(response)['results'][0]['url'], mounted)
+            # A bookmarked mounted URL must work in a fresh process without first opening its alias.
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                base = urls[0].rstrip('/')
+                with client.open(base + mounted + '?raw=1') as response:
+                    self.assertEqual(response.read().decode(), document.read_text())
+                with client.open(base + quote(str(document), safe='/')) as response:
+                    self.assertEqual(urlsplit(response.url).path, mounted)
+                    self.assertIn(b'id="content"', response.read())
+                with client.open(base + '/__serve_html__/api/preview?' + urlencode({'url': mounted})) as response:
+                    self.assertEqual(json.load(response)['lines'][0]['text'], '# Briefing')
+
+    def test_external_files_and_directories_outside_git_work_without_configuration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, extra = Path(temp) / 'schedule', Path(temp) / 'notes'
+            root.mkdir()
+            extra.mkdir()
+            (extra / 'page.html').write_text('<h1>External HTML</h1>')
+            (extra / 'data.txt').write_text('External data')
+            client = build_opener(ProxyHandler({}))
+            with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                base = urls[0].rstrip('/')
+                for path, expected in ((extra / 'page.html', b'<h1>External HTML</h1>'),
+                                       (extra / 'data.txt', b'External data')):
+                    with client.open(base + str(path)) as response:
+                        self.assertEqual(response.read(), expected)
+                with client.open(base + str(extra)) as response:
+                    self.assertTrue(response.url.endswith('/'))
+                    self.assertIn(b'page.html', response.read())
+                for path in (str(extra / 'missing.md'), str(extra / 'missing.md') + '/'):
+                    with self.assertRaises(HTTPError) as caught:
+                        client.open(base + path)
+                    self.assertEqual(caught.exception.code, 404)
+                    self.assertNotIn('--allow-root', caught.exception.read().decode())
+                    caught.exception.close()
+
+    def test_automatic_urls_do_not_depend_on_earlier_directory_requests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, extra = Path(temp) / 'schedule', Path(temp) / 'notes'
+            root.mkdir()
+            (extra / 'nested').mkdir(parents=True)
+            document = extra / 'nested/note.md'
+            document.write_text('# Note')
+            client = build_opener(ProxyHandler({}))
+            destinations = []
+            for open_parent in (False, True):
+                with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
+                    base = urls[0].rstrip('/')
+                    if open_parent:
+                        with client.open(base + str(extra)) as response:
+                            response.read()
+                    with client.open(base + str(document)) as response:
+                        destinations.append(urlsplit(response.url).path)
+                        response.read()
+            self.assertEqual(destinations[0], destinations[1])
+
     def test_project_absolute_links_redirect_and_existing_web_paths_take_precedence(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / 'root'
@@ -84,7 +171,7 @@ class AbsoluteLinkTests(unittest.TestCase):
                 with client.open(base + mount_root) as response:
                     self.assertNotIn('href="../', response.read().decode())
 
-    def test_absolute_access_rejects_unconfigured_paths_traversal_and_symlink_escapes(self):
+    def test_absolute_access_rejects_traversal_and_symlink_escapes(self):
         with tempfile.TemporaryDirectory() as temp:
             root, extra, outside = (Path(temp) / name for name in ('root', 'extra', 'extra-other'))
             for directory in (root, extra, outside):
@@ -101,7 +188,6 @@ class AbsoluteLinkTests(unittest.TestCase):
                     mount = urlsplit(response.url).path.rsplit('/', 1)[0] + '/'
                     self.assertEqual(response.read(), b'Allowed')
                 for path, status in (
-                    (str(outside / 'secret.txt'), 404),
                     (str(extra / 'escape/secret.txt'), 403),
                     (str(root / 'escape/secret.txt'), 403),
                     (mount + 'escape/secret.txt', 403),
@@ -109,6 +195,7 @@ class AbsoluteLinkTests(unittest.TestCase):
                     (mount + '%2e%2e/extra-other/secret.txt', 400),
                     (mount + '%00.txt', 400),
                     ('/__docserve_fs__/unknown/secret.txt', 404),
+                    ('/__docserve_fs__/auto-invalid/secret.txt', 404),
                     ('/__docserve_fs__/', 404),
                 ):
                     with self.subTest(path=path), self.assertRaises(HTTPError) as caught:
@@ -116,9 +203,6 @@ class AbsoluteLinkTests(unittest.TestCase):
                     self.assertEqual(caught.exception.code, status)
                     body = caught.exception.read().decode()
                     self.assertNotIn('Secret bytes must not be served', body)
-                    if path == str(outside / 'secret.txt'):
-                        self.assertIn('--allow-root', body)
-                        self.assertIn(str(outside), body)
                     caught.exception.close()
                 # Replacing a previously safe symlink cannot reuse its mounted URL to escape.
                 (extra / 'inside.txt').unlink()

@@ -304,45 +304,57 @@ directory, use `docserve docs/nested -f review.html`.
 ### Absolute filesystem links
 
 Links such as `[Review](/home/vimkim/project/docs/review.md)` work automatically
-when the target is within the serving root. docserve first looks for the
+even when the target is in another repository. docserve first looks for the
 ordinary web path under the serving root. If that path does not exist, it
-matches the absolute filesystem path against the configured roots and
-redirects to the document's normal URL. For example, with
+looks for the absolute filesystem path and redirects to the document's normal
+URL. For example, with
 `/home/vimkim/project` as the serving root, the link above redirects to
 `/docs/review.md`. Existing web paths take precedence when both interpretations
 name a file or directory.
 
-Allow links into other directories explicitly:
+No extra flag is needed for links into other directories:
 
 ```sh
-docserve docs/review.md --allow-root /home/vimkim/my-cubrid
-docserve docs/review.md --allow-root ~/my-cubrid --allow-root ~/shared-notes
+docserve /home/vimkim/temp/todays-schedule/daily/today-2026-10-19.md
+# A link to /home/vimkim/gh/my-cubrid-docs/CBRD-27193/briefing-2026-10-19.md opens automatically.
 ```
 
-`--allow-root DIR` is repeatable, accepts relative or absolute directories, and
-expands `~`. Each directory must exist. An allowed root exposes its complete
-tree, including hidden and sensitive files, to anyone who can reach the server.
-It does not replace or expand the main serving root at `/`.
+For an external file or directory, docserve detects its enclosing Git repository
+as a document root. Outside Git, it uses the selected directory or the file's
+parent, just as for a positional path on the command line. Relative links and
+assets within that root remain accessible. This discovery does not change the
+main serving root at `/`.
 
-Documents in an allowed root use the reserved URL namespace
+Absolute filesystem URLs can request any readable regular file or directory;
+access does not depend on whether a served document contains that link. Hidden
+and sensitive files can therefore be exposed outside the main serving root.
+Neither `-d` nor `--allow-root` is an access restriction. Missing targets return
+404. See the [security notice](../README.md#docserve).
+
+`--allow-root DIR` remains available to choose a document root explicitly instead
+of using automatic Git-root discovery for links inside it. It is repeatable,
+accepts relative or absolute directories, and expands `~`. Each directory must
+exist. For example, `docserve docs/review.md --allow-root ~/shared-notes` groups
+those documents under `shared-notes`, even if it is inside a larger repository.
+
+Documents in an external document root use the reserved URL namespace
 `/__docserve_fs__/<directory-id>/`. These URLs remain stable across restarts and
-option ordering on the same server filesystem. Markdown and HTML render as
+option ordering on the same server filesystem. Automatically discovered roots
+are encoded in their URLs, so bookmarks work after restarting without extra
+flags or first reopening the original link. Markdown and HTML render as
 usual; relative links, stylesheets, scripts, and images resolve within that
 directory tree. Query strings and heading fragments survive the redirect.
 Absolute links in HTML, standalone pages, and image URLs use the same resolver.
 Links must use normal URL encoding for filename characters such as `#` and `?`.
 
 The directory pane, full directory listing, finder, previews, Copy path, and
-Recently visited work within each allowed root. Parent navigation stops at
+Recently visited work within each document root. Parent navigation stops at
 that root. Finder searches and visit history stay separate for each root;
-**Go to root** always returns to the main serving root. For a document in an
-allowed root, the finder's root search scope covers that allowed directory.
-Symlinks inside an allowed root must resolve within it. Absolute filesystem
+**Go to root** always returns to the main serving root. For a document in a
+document root, the finder's root search scope covers that directory.
+Symlinks inside a document root must resolve within it. Absolute filesystem
 aliases also reject symlinks that leave the matched root. Existing ordinary
 links under the main serving root retain their documented symlink behavior.
-
-An absolute link outside all configured directories returns a 404 with an
-`--allow-root` hint. docserve does not automatically expose that directory.
 
 ## Markdown preview
 
@@ -372,8 +384,8 @@ $$
 ````
 
 Relative image and document links resolve from the Markdown file's original
-directory. Keep referenced files within its serving or allowed root, or use
-absolute filesystem links into another configured root. SVGs are
+directory. Keep relative references within its serving or document root, or use
+absolute filesystem links into another directory. SVGs are
 displayed as images. LaTeX equations use KaTeX's supported math syntax; ordinary
 code blocks and inline code remain literal. Invalid diagrams or equations show
 their source and error while the remaining document stays readable.
