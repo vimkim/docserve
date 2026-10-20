@@ -270,16 +270,28 @@ test('copy paths work on insecure HTTP and offer manual copying when the browser
     assert.equal(await button.evaluate(node => node === document.activeElement), true);
     await reader.bringToFront();
     assert.equal(await reader.evaluate(() => navigator.clipboard.readText()), path.join(directory, 'nested', filename));
+    await reader.evaluate(() => navigator.clipboard.writeText('Waiting for finder copy'));
+    await page.bringToFront();
+    await page.getByRole('button', { name: 'Find files', exact: true }).click();
+    await page.getByRole('searchbox', { name: 'Search query' }).fill('nested/' + filename);
+    const finderCopy = page.locator('#finder-copy-path');
+    await page.waitForFunction(() => document.querySelector('#finder-copy-path')?.disabled === false);
+    await finderCopy.click();
+    assert.equal(await page.locator('#finder .copy-path-status').isVisible(), true);
+    assert.equal(await finderCopy.evaluate(node => node === document.activeElement), true);
+    await reader.bringToFront();
+    assert.equal(await reader.evaluate(() => navigator.clipboard.readText()), path.join(directory, 'nested', filename));
     await page.bringToFront();
     await page.evaluate(() => { document.execCommand = () => false; });
-    await button.click();
+    await finderCopy.click();
     const dialog = page.getByRole('dialog', { name: 'Copy server path', exact: true });
     await dialog.waitFor();
     const field = dialog.getByRole('textbox', { name: 'Server path', exact: true });
     assert.equal(await field.inputValue(), path.join(directory, 'nested', filename));
     assert.equal(await field.evaluate(node => node.selectionStart === 0 && node.selectionEnd === node.value.length), true);
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
-    assert.equal(await button.evaluate(node => node === document.activeElement), true);
+    assert.equal(await finderCopy.evaluate(node => node === document.activeElement), true);
+    await page.locator('#finder-close').click();
     await reader.bringToFront();
     await reader.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async () => { throw new Error('Permission denied'); } } }); });
     await reader.locator('#document-banner .copy-path-button').click();
@@ -589,9 +601,9 @@ test('recently updated keeps progress on query changes and clears it when closed
   }
 });
 
-for (const width of [1280, 390]) {
+for (const width of [1920, 390, 320]) {
   test(`recently updated previews recursive files and allows clearing the default filename filter at ${width}px`, async () => {
-    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    const page = await browser.newPage({ viewport: { width, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] });
     page.setDefaultTimeout(5000);
     try {
       await page.goto(baseURL + 'updates/');
@@ -604,6 +616,13 @@ for (const width of [1280, 390]) {
       const filename = dialog.getByRole('textbox', { name: 'Include filenames (regex)' });
       const exclude = dialog.getByRole('textbox', { name: 'Exclude filenames (regex)' });
       const paths = dialog.locator('.finder-result-path');
+      const copy = dialog.getByRole('button', { name: 'Copy path', exact: true });
+      const copied = async relative => {
+        await page.waitForFunction(() => document.querySelector('#finder-copy-path')?.disabled === false);
+        await copy.click();
+        await page.waitForFunction(async expected => await navigator.clipboard.readText() === expected, path.join(directory, relative));
+        assert.equal(await dialog.locator('.copy-path-status').isVisible(), true);
+      };
       const waitForPaths = expected => page.waitForFunction(expected =>
         JSON.stringify([...document.querySelectorAll('#finder-results .finder-result-path')].map(node => node.textContent)) === JSON.stringify(expected), expected);
       assert.equal(await filename.inputValue(), '\\.(html|md)$');
@@ -611,11 +630,20 @@ for (const width of [1280, 390]) {
       await query.fill('updates');
       await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
       await page.frameLocator('#finder-preview iframe').getByRole('heading', { name: 'Recently updated HTML', exact: true }).waitFor();
+      await copied('updates/nested/new #.HTML');
+      const bounds = await dialog.boundingBox();
+      assert.ok(bounds.width >= width * .95 && bounds.width <= width);
+      assert.ok(bounds.height >= 900 * .93 && bounds.y >= 0 && bounds.y + bounds.height <= 900);
+      const resultsBounds = await dialog.locator('#finder-results').boundingBox();
+      const previewBounds = await dialog.locator('.finder-preview-pane').boundingBox();
+      if (width >= 768) assert.ok(previewBounds.width > resultsBounds.width * 1.8);
+      else assert.ok(previewBounds.height > resultsBounds.height);
       assert.equal(await page.evaluate(() => window.previewExecuted), undefined);
       assert.match(await dialog.locator('time').first().textContent(), /^Modified · /);
       assert.ok(await dialog.locator('time').first().getAttribute('datetime'));
       await filename.fill('');
       await waitForPaths(['updates/latest.txt', 'updates/nested/new #.HTML', 'updates/old.md']);
+      await copied('updates/latest.txt');
       await exclude.fill('\\.txt$');
       await waitForPaths(['updates/nested/new #.HTML', 'updates/old.md']);
       await dialog.getByRole('tab', { name: 'Contents', exact: true }).click();
@@ -632,6 +660,7 @@ for (const width of [1280, 390]) {
       assert.equal(await dialog.locator('#finder-elapsed').isVisible(), false);
       assert.equal(await paths.count(), 0);
       assert.equal(await dialog.getByRole('link', { name: 'Open file', exact: true }).isVisible(), false);
+      assert.equal(await copy.isVisible(), false);
       await exclude.fill('');
       await filename.fill('\\.(html|md)$');
       await dialog.getByRole('combobox', { name: 'Search scope' }).selectOption('current');
@@ -645,6 +674,7 @@ for (const width of [1280, 390]) {
       }
       await query.press('ArrowDown');
       await page.frameLocator('#finder-preview iframe').getByRole('heading', { name: 'Recently updated example', exact: true }).waitFor();
+      await copied('updates/old.md');
       await query.press('Escape');
       assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
       await trigger.click();

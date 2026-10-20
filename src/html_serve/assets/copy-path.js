@@ -1,13 +1,17 @@
 // Shared by directory listings and document controls, including plain HTTP LANs.
 let status, statusTimer, manualDialog;
 
+function copyHost() {
+  return document.activeElement?.closest("dialog[open]") || document.body;
+}
+
 function announce(message) {
   if (!status) {
     status = document.createElement("p");
     status.className = "copy-path-status";
     status.setAttribute("role", "status");
-    document.body.append(status);
   }
+  copyHost().append(status);
   clearTimeout(statusTimer);
   status.textContent = message;
   statusTimer = setTimeout(() => { status.textContent = ""; }, 3000);
@@ -21,7 +25,7 @@ function legacyCopy(path) {
   field.value = path;
   field.readOnly = true;
   field.className = "copy-path-transfer";
-  document.body.append(field);
+  copyHost().append(field);
   try {
     field.focus({ preventScroll: true });
     field.select();

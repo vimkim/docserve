@@ -1,4 +1,4 @@
-import "./copy-path.js";
+import { createCopyPathButton, setCopyPath } from "./copy-path.js";
 
 const tools = document.getElementById("navigation-tools");
 const labels = { files: "Find files", contents: "Find contents", directories: "Find directories", recent: "Recently visited", updated: "Recently updated" };
@@ -63,6 +63,10 @@ const previewStatus = document.getElementById("finder-preview-status");
 const previewFormat = document.getElementById("finder-preview-format");
 const previewFormatLabel = document.getElementById("finder-preview-format-label");
 const openLink = document.getElementById("finder-open");
+const copyButton = createCopyPathButton();
+copyButton.id = "finder-copy-path";
+copyButton.hidden = true;
+openLink.before(copyButton);
 const scope = document.getElementById("finder-scope");
 const include = document.getElementById("finder-include");
 const regex = document.getElementById("finder-regex");
@@ -114,6 +118,15 @@ function resetPreview() {
   previewStatus.textContent = "";
   document.getElementById("finder-path").textContent = "";
   openLink.hidden = true;
+  copyButton.hidden = true;
+  setCopyPath(copyButton, "");
+}
+
+async function loadPreviewPath(url, current, signal) {
+  try {
+    const data = await api("path", { url }, signal);
+    if (current === previewGeneration) setCopyPath(copyButton, data.server_path);
+  } catch { /* Keep previewing available when path metadata cannot be loaded. */ }
 }
 
 function matchText(element, text, ranges, firstByte = 0) {
@@ -200,6 +213,8 @@ async function select(index) {
   }
   const current = previewGeneration;
   previewAbort = new AbortController();
+  copyButton.hidden = false;
+  void loadPreviewPath(result.url, current, previewAbort.signal);
   previewStatus.textContent = "Loading preview…";
   try {
     const data = await api("preview", {

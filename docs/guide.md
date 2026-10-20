@@ -50,7 +50,8 @@ The document toolbar's **Directory listing** button opens the directory pane;
 **Copy path** beside an entry copies its absolute server filesystem path.
 **Copy path** next to **Go to root** copies the listed directory's path.
 Copy buttons are also available beside entries in the document's directory
-pane. Paths keep the visible symlink name and are copied without shell quoting.
+pane and in the finder preview for the selected file. Paths keep the visible
+symlink name and are copied without shell quoting.
 
 Dates use the server's local timezone; hover over a date for its ISO timestamp
 and UTC offset. Directory dates describe the directory itself, not its newest
