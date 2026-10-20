@@ -346,7 +346,7 @@ class FinderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / 'sub').mkdir()
-            (root / '.rgignore').write_text('secret.txt\n')
+            (root / '.fdignore').write_text('secret.txt\n')
             (root / 'sub/.gitignore').write_text('!secret.txt\n')
             (root / 'sub/secret.txt').write_text('secret')
             (root / 'sub/visible.txt').write_text('visible')
@@ -429,6 +429,7 @@ class FinderTests(unittest.TestCase):
             tools = root / 'find-bin'
             tools.mkdir()
             (tools / 'find').symlink_to(shutil.which('find'))
+            (tools / 'fd').symlink_to(shutil.which('fd') or shutil.which('fdfind'))
             env = {**os.environ, 'PATH': str(tools)}
             with self.server(root, '--bind', '127.0.0.1', env=env) as (_, urls, _):
                 result = self.request_json(urls[0], 'search', mode='files', q='md')

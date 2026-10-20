@@ -23,10 +23,10 @@ from urllib.parse import quote
 
 
 RESULT_LIMIT = 200
-ENTRY_LIMIT = 20000
 SCAN_SECONDS = 3
 UPDATED_SECONDS = 30
 UPDATED_FILENAME = r'\.(html|md)$'
+ROOT_IGNORE = Path(__file__).with_name('docserve.ignore')
 PREVIEW_BYTES = 65536
 FILE_BYTES = 2 * 1024 * 1024
 
@@ -210,6 +210,17 @@ def fuzzy_rank(query, path):
     return score
 
 
+def fuzzy_pattern(query):
+    """Reduce fd output without losing Python's Unicode casefold matches."""
+    token = max(query.casefold().split(), key=len, default='')
+    if not token:
+        return '.'
+    pattern = '.*'.join(re.escape(char).replace('\x00', r'\x00') for char in token)
+    # fd's case-insensitive regex does not expand characters such as ß to ss.
+    # Keep non-ASCII paths as candidates and verify all tokens with fuzzy_rank.
+    return '(?s)(?:' + pattern + r'|[^\x00-\x7f])'
+
+
 def text_window(text, column=0, limit=4000):
     """Keep a selected UTF-8 byte column visible when shortening a long line."""
     position = len(text.encode('utf-8')[:max(0, column)].decode('utf-8', errors='ignore'))
@@ -246,54 +257,38 @@ class Finder:
             raise FinderError('Search path is unavailable.', 404) from error
         return path
 
-    def entries(self, scope, include):
+    def entries(self, scope, include, mode, deadline, query=''):
+        """Stream candidates from fd without limiting the number of scanned entries."""
         start = self.resolve(scope, directory=True)
+        executable = shutil.which('fd') or shutil.which('fdfind')
+        if not executable:
+            raise FinderError('File and directory search requires fd (or fdfind). Install fd on the server.', 503)
+        if not os.access(start, os.R_OK | os.X_OK):
+            raise FinderError('Search directory is unreadable.', 403)
         relative = start.relative_to(self.root).as_posix()
-        relative = '' if relative == '.' else relative
-        rules = IgnoreRules()
-        # Retain ancestor rules when the reader limits the search scope.
-        ancestor = self.root
-        for part in start.relative_to(self.root).parts:
-            base = '' if ancestor == self.root else ancestor.relative_to(self.root).as_posix()
-            rules = rules.beneath(ancestor, base)
-            ancestor /= part
-        stack = [(start, relative, rules)]
-        found, visited, truncated = [], 0, False
-        deadline = time.monotonic() + SCAN_SECONDS
-        while stack:
-            directory, base, inherited = stack.pop()
-            rules = inherited if include else inherited.beneath(directory, base)
-            try:
-                with os.scandir(directory) as stream:
-                    children = list(islice(stream, ENTRY_LIMIT - visited + 1))
-            except OSError:
-                truncated = True
-                continue
-            for child in sorted(children, key=lambda item: item.name):
-                visited += 1
-                if visited > ENTRY_LIMIT or time.monotonic() >= deadline:
-                    return found, True
-                if child.name == '.git' or (not base and child.name == '__serve_html__'):
-                    continue
-                if not include and child.name.startswith('.'):
-                    continue
-                path = base + '/' + child.name if base else child.name
+        directory = mode == 'directories'
+        command = [executable, '--no-require-git', '--type', 'd' if directory else 'f',
+                   '--exclude', '.git', '--exclude', '/__serve_html__', '--print0', '--color', 'never']
+        if not directory:
+            command.extend(['--type', 'l'])
+        if include:
+            command.extend(['--hidden', '--no-ignore'])
+        if start == Path('/'):
+            command.extend(['--ignore-file', os.fspath(ROOT_IGNORE)])
+        pattern = fuzzy_pattern(query) if mode != 'contents' else '.'
+        command.extend(['--full-path', '--ignore-case', '--', pattern,
+                        './' + relative if relative != '.' else '.'])
+        with closing(self.scan_paths(command, deadline, 'File scanner')) as paths:
+            for path in paths:
+                source = self.root / path
                 try:
-                    is_directory = child.is_dir(follow_symlinks=False)
-                    if not include and rules.excludes(path, is_directory):
-                        continue
-                    if child.is_symlink():
-                        target = self.target(Path(child.path))
+                    if source.is_symlink():
+                        target = self.target(source)
                         if not target.is_file():
                             continue
-                    elif not is_directory and not child.is_file(follow_symlinks=False):
-                        continue
                 except (OSError, RuntimeError, FinderError):
                     continue
-                found.append(TreeEntry(path, is_directory, child))
-                if is_directory:
-                    stack.append((Path(child.path), path, rules))
-        return found, truncated
+                yield TreeEntry(path, directory, os.fspath(source))
 
     def search(self, mode='files', q='', scope='/', include=False, regex=False,
                filename=None, exclude_filename='', limit=RESULT_LIMIT, timeout=UPDATED_SECONDS):
@@ -307,22 +302,34 @@ class Finder:
             raise FinderError('Filename filters must contain at most 500 characters.')
         if mode == 'updated':
             return self.updated(q, scope, include, filename, exclude_filename, limit, timeout)
-        entries, truncated = self.entries(scope, include)
+        if mode == 'contents' and not q:
+            return self.contents([], q, regex, False, filename, exclude_filename)
+        deadline = time.monotonic() + timeout
+        count = 0
+
+        def matching(entries):
+            nonlocal count
+            for entry in entries:
+                rank = fuzzy_rank(q, entry.path)
+                if rank is not None:
+                    count += 1
+                    yield rank, entry.path, entry.directory
+
+        try:
+            with closing(self.entries(scope, include, mode, deadline, q)) as entries:
+                if mode == 'contents':
+                    candidates = list(entries)
+                else:
+                    matches = heapq.nsmallest(RESULT_LIMIT, matching(entries))
+        except ScanTimeout:
+            return {'results': [], 'truncated': True, 'scan_complete': False,
+                    'message': f'Scan exceeded the {timeout:g}-second limit. Search a narrower directory.'}
         if mode == 'contents':
-            return self.contents(entries, q, regex, truncated, filename, exclude_filename)
-        matches = []
-        for entry in entries:
-            path, directory = entry.path, entry.directory
-            if directory != (mode == 'directories'):
-                continue
-            rank = fuzzy_rank(q, path)
-            if rank is not None:
-                matches.append((rank, path, directory))
-        matches.sort()
+            return self.contents(candidates, q, regex, False, filename, exclude_filename)
         return {'results': [{'path': path, 'kind': 'directory' if directory else 'file',
                              'url': path_url(path, directory)}
-                            for _, path, directory in matches[:RESULT_LIMIT]],
-                'truncated': truncated or len(matches) > RESULT_LIMIT}
+                            for _, path, directory in matches],
+                'truncated': count > RESULT_LIMIT, 'scan_complete': True}
 
     def updated_entries(self, scope, include, filename, deadline):
         """Let fd scan with recent-docs.sh rules; use find when fd is unavailable."""
@@ -334,7 +341,6 @@ class Finder:
             raise FinderError('Search directory is unreadable.', 403) from error
         relative = start.relative_to(self.root).as_posix()
         search_path = './' + relative if relative != '.' else '.'
-        root_name = os.fspath(self.root)
         executable = shutil.which('fd') or shutil.which('fdfind')
         ignores = None
         if executable:
@@ -361,6 +367,14 @@ class Finder:
             if filename == UPDATED_FILENAME:
                 command.extend(['(', '-iname', '*.html', '-o', '-iname', '*.md', ')'])
             command.extend(['-print0', ')'])
+        with closing(self.scan_paths(command, deadline, 'Recent-file scanner')) as paths:
+            for path in paths:
+                source = os.path.join(self.root, path)
+                if ignores is None or ignores.allows(source):
+                    yield TreeEntry(path, False, source)
+
+    def scan_paths(self, command, deadline, label):
+        """Read NUL-delimited native scanner output and always reap the child process."""
         if time.monotonic() >= deadline:
             raise ScanTimeout()
         with tempfile.TemporaryFile() as errors:
@@ -368,7 +382,7 @@ class Finder:
                 process = subprocess.Popen(command, cwd=self.root, stdin=subprocess.DEVNULL,
                                            stdout=subprocess.PIPE, stderr=errors)
             except OSError as error:
-                raise FinderError('Could not start the recent-file scanner.', 503) from error
+                raise FinderError(f'Could not start the {label.lower()}.', 503) from error
             try:
                 pending = b''
                 with selectors.DefaultSelector() as selector:
@@ -386,10 +400,9 @@ class Finder:
                         for record in records:
                             if time.monotonic() >= deadline:
                                 raise ScanTimeout()
-                            path = os.fsdecode(record).removeprefix('./')
-                            source = os.path.join(root_name, path)
-                            if ignores is None or ignores.allows(source):
-                                yield TreeEntry(path, False, source)
+                            yield os.fsdecode(record).removeprefix('./').removesuffix('/')
+                if pending:
+                    raise FinderError(f'{label} returned an incomplete filename.', 503)
                 try:
                     code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired as error:
@@ -397,7 +410,7 @@ class Finder:
                 if code:
                     errors.seek(0)
                     detail = errors.read(4096).decode('utf-8', errors='replace').strip()
-                    raise FinderError(f'Recent-file scanner failed: {detail or code}', 503)
+                    raise FinderError(f'{label} failed: {detail or code}', 503)
             finally:
                 if process.poll() is None:
                     process.kill()

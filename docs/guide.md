@@ -83,12 +83,25 @@ to its button. The preview appears below the results on narrow screens.
 
 Search covers the serving root by default. Select **Current directory** to
 search the current directory and its descendants. File, directory, and content
-search read `.gitignore`, `.ignore`, and `.rgignore` files within the serving root. Hidden and ignored
+search use `fd` (or `fdfind`) to enumerate paths. Install fd on the server to use
+these searches; ordinary browsing and previews work without it. Searches use
+fd's native `.gitignore`, `.ignore`, and `.fdignore` handling, including ancestor
+and global ignore files. They do not read `.rgignore`. Hidden and ignored
 entries stay out of results unless **Include hidden and ignored** is selected.
 Git's `.git` internals always stay excluded. These filters do not change the
 ordinary directory listing. Empty directories are searchable.
 Search skips symlinked directories and symlinked files whose targets leave
 the serving root. Ordinary direct links retain their existing behavior.
+
+When file, directory, or content search starts at the filesystem root `/`,
+the packaged [docserve.ignore](../src/html_serve/docserve.ignore) file adds
+explicit exclusions for `/var`, `/usr`, `/proc`, `/sys`, and `/dev`.
+This file uses gitignore-style patterns and is passed directly to fd.
+Edit it to maintain the root-search exclusions, then reinstall with `just sync`
+after merging source changes. These rules still apply with **Include hidden
+and ignored**. They apply only to searches starting at `/`: a **Current directory**
+search inside `/usr`, for example, can still search that directory. Names such
+as `/home/project/usr` remain searchable. Direct browsing is unaffected.
 
 **Find contents** requires the `rg` (ripgrep) executable on the server.
 The finder explains when it is unavailable. File and directory finding and
@@ -145,9 +158,13 @@ The scan has a 30-second deadline and no entry-count limit.
 If the deadline expires, the finder shows a timeout message without a partial
 ranking. A completed scan with more than 200 matches shows the newest matches.
 
-File, directory, and content searches return up to 200 results after scanning
-at most 20,000 entries. Their tree scans and content searches each have a
-three-second execution budget.
+File, directory, and content searches enumerate their complete scope with fd,
+without an entry-count limit. Tree scans have a 30-second deadline. File and
+directory searches select the best 200 fuzzy matches after scanning the scope,
+using bounded result memory. If a scan exceeds its deadline, the finder reports
+a timeout without returning an incomplete ranking; narrow the scope and try again.
+Content matching has a separate three-second execution budget and returns up to
+200 matching lines.
 Content search skips files larger than 2 MiB and returns up to 40 matching
 lines per file. The finder reports limited results, skipped large files,
 and invalid patterns. Narrow the query or scope when results are limited.

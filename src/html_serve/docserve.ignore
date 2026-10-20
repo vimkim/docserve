@@ -1,0 +1,7 @@
+# Gitignore-style rules for Find files/directories/contents scans starting at /.
+# A scoped search inside one of these directories remains available.
+/var/
+/usr/
+/proc/
+/sys/
+/dev/

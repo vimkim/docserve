@@ -81,7 +81,9 @@ popup. **Open standalone** opens the document in a separate tab.
 See [document navigation](docs/guide.md#document-navigation).
 
 Use **Find files**, **Find contents**, and **Find directories** to search paths
-or text with rendered Markdown and HTML previews. **Go to root** returns to the serving root.
+or text with rendered Markdown and HTML previews. These searches use `fd` (or
+`fdfind`) to scan the complete scope; content matching also requires `rg`.
+**Go to root** returns to the serving root.
 **Recently visited** keeps files and directories available across server restarts.
 **Recently updated** finds changed documents recursively, newest first, with an
 editable filename filter that starts with `.html` and `.md` files.
