@@ -1,15 +1,14 @@
-# Install only from the primary main checkout so the command has a stable source.
+# Install or refresh a regular tool from the primary main checkout.
 sync:
     @test -d .git || { echo "Run just sync from the primary checkout." >&2; exit 1; }
     @test "$(git branch --show-current)" = main || { echo "Run just sync from main." >&2; exit 1; }
-    @if uv tool list | awk '$1 == "html-serve" { found = 1 } END { exit !found }'; then uv tool uninstall html-serve; fi
-    uv tool install --editable . --reinstall
+    uv tool install --reinstall .
 
 # Explicit optional checker setup; never downloads during a check.
 checker-setup:
     @test -d .git || { echo "Run just checker-setup from the primary checkout." >&2; exit 1; }
     @test "$(git branch --show-current)" = main || { echo "Run just checker-setup from main." >&2; exit 1; }
-    uv tool install --editable '.[check]' --reinstall
+    uv tool install --reinstall '.[check]'
     "$(uv tool dir)/docserve/bin/playwright" install chromium --only-shell
 
 test:

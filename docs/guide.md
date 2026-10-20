@@ -429,7 +429,7 @@ check. A render pass does not establish layout quality or rule out clipping,
 overlap, or unreadable labels.
 
 Checking is optional. Serving still has no third-party Python dependencies and
-needs no Node/npm. To add checker support to the editable uv tool, run this
+needs no Node/npm. To add checker support to the regular uv tool, run this
 explicit setup command from the primary main checkout:
 
 ```sh
@@ -548,8 +548,17 @@ route to the server.
 
 Clone this repository to `~/gh/docserve` and run `just sync` from its main
 checkout. The recipe installs `docserve`, `docserve-check`, `docserve-recent`, and
-the `html-serve` and `md-serve` aliases in `~/.local/bin` as an editable uv tool.
-It requires uv and just.
+the `html-serve` and `md-serve` aliases as a regular uv tool with `uv tool install --reinstall .`.
+It requires uv and just. Commands normally appear in `~/.local/bin`.
+Use `uv tool dir --bin` to locate them, or set `UV_TOOL_BIN_DIR` to select another directory.
+Run `uv tool update-shell` if that directory is absent from PATH.
+Remove the installed commands with `uv tool uninstall docserve`.
+Tool installation resolves dependencies separately from the project's `uv.lock`.
+Serving has no third-party runtime dependencies. The optional `check` extra retains its declared Playwright range.
+
+If a former `html-serve` distribution owns the alias, the first sync can report
+`Executable already exists`. Migrate explicitly with `uv tool install --reinstall --force .`.
+Later refreshes use `just sync`. The recipe leaves the old distribution available if the new build fails.
 Serving requires Python 3.10+ and Linux `ip` for network discovery. It has no third-party Python runtime dependencies.
 
 The server lives in `src/html_serve/cli.py`; viewer files and their bundled
@@ -566,9 +575,10 @@ The dotfiles repository owns fresh-machine bootstrap, `daily-update`, and old
 script/asset path compatibility. The `vimkim/my-skills` collection owns agent
 instructions. See [migration details](migration.md).
 
-The editable command follows edits in the primary checkout. Keep task worktrees
-separate, and test them in temporary environments before merging. `just sync`
-requires the primary checkout on main.
+The installed commands run independently of the source checkout and its `.venv`.
+Run `just sync` after source changes, including changes without a version bump.
+The next sync converts existing editable installations. Use `uv run` for development.
+Test task worktrees in temporary environments before merging. `just sync` requires the primary checkout on main.
 
 ## Verification
 

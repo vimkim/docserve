@@ -11,8 +11,8 @@ third-party notices. Regenerate vendor assets with `just assets` when changing
 browser dependencies. Retain the manifest and license notices.
 
 Run `just sync` from the primary main checkout after an approved local merge.
-The editable installation follows that checkout. Use temporary environments to
-test task worktrees without replacing the installed command.
+The regular installation requires another sync after source changes. Use
+temporary environments to test task worktrees without replacing the installed command.
 
 ## Agent skills
 

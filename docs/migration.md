@@ -25,10 +25,11 @@ asset symlinks remain valid. The `/__serve_html__/` asset prefix, saved-theme ke
 and test environment variables also retain their legacy names for compatibility.
 Existing checkouts can keep their `html-serve` directory name. New installations
 use `~/gh/docserve`. Run `just sync` from the primary checkout on `main`.
-The recipe removes an installed legacy `html-serve` uv tool before installing
-`docserve`. Removing the old tool first prevents its uninstaller from deleting
-the new package's `html-serve` alias. Repeating `just sync` reinstalls all three
-commands under the `docserve` package.
+The recipe runs `uv tool install --reinstall .` and installs a regular copy.
+It leaves a former `html-serve` distribution available if the new build fails.
+If that distribution owns the alias and blocks installation, follow the explicit
+[installation migration](guide.md#source-and-installation). Repeating `just sync`
+refreshes the commands under the `docserve` package, including source changes without a version bump.
 
 The development-only security notice in both READMEs describes Git-root discovery,
 network exposure, and the lack of authentication or TLS. This rename does not

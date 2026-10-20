@@ -118,6 +118,13 @@ just sync
 **`md-serve`**. All three commands accept the same arguments and serve both HTML
 and Markdown. Existing `html-serve` commands keep working.
 
+The recipe runs `uv tool install --reinstall .` from the primary `main` checkout.
+The regular installation runs independently of the source checkout and its `.venv`.
+Run sync after source changes, including changes without a version bump.
+Existing editable installations become regular installations on the next sync.
+Use `uv run` for development against the current source.
+See [installation details](docs/guide.md#source-and-installation) for executable paths and migration.
+
 Serving requires **Python 3.10+** and Linux **iproute2** (`ip`). The Python
 runtime has no third-party dependencies. Node/npm are for development only.
 
