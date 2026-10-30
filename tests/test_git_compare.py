@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 import subprocess
+import time
+from unittest.mock import patch
 import tempfile
 import unittest
 
@@ -50,6 +52,32 @@ class GitComparisonTest(unittest.TestCase):
         self.assertEqual(self.history().default, self.third)
         self.assertEqual(before, '')
         self.assertEqual(self.run_git('status', '--porcelain=v1').strip(), 'M "renamed #?.md"')
+
+    def test_merge_resolution_is_previous_revision(self):
+        branch = self.run_git('branch', '--show-current').strip()
+        self.run_git('checkout', '-qb', 'side')
+        self.path.write_text('side')
+        self.commit('side')
+        self.run_git('checkout', '-q', branch)
+        self.path.write_text('main')
+        self.commit('main')
+        subprocess.run(['git', '-C', str(self.root), 'merge', 'side'], capture_output=True)
+        self.path.write_text('resolution')
+        self.commit('resolution')
+        merge = self.run_git('rev-parse', 'HEAD').strip()
+        self.path.write_text('later')
+        self.commit('later')
+        self.assertEqual(self.history().default, merge)
+
+    def test_git_timeout_after_stdout_closes(self):
+        fake = self.root / 'bin'
+        fake.mkdir()
+        executable = fake / 'git'
+        executable.write_text('#!/bin/sh\nexec 1>&-\nsleep 5\n')
+        executable.chmod(0o755)
+        with patch.dict(os.environ, {'PATH': str(fake) + os.pathsep + os.environ['PATH']}):
+            with self.assertRaisesRegex(GitError, 'timed out'):
+                git(self.root, 'status', deadline=time.monotonic() + 0.2)
 
     def test_invalid_tree_path_and_revision(self):
         for revision, path in [('HEAD', self.path.name), (self.third, '../outside'), (self.third, 'missing')]:
