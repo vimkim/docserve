@@ -60,8 +60,8 @@ def git(root, *args, limit=LIMIT, deadline=None):
 
 def repo_for(path, deadline=None):
     result = git(path.parent, 'rev-parse', '--show-toplevel', limit=8192, deadline=deadline)
-    root = Path(os.fsdecode(result.rstrip(b'\n'))).resolve()
-    return root, path.relative_to(root).as_posix()
+    root = Path(os.fsdecode(result.removesuffix(b'\n'))).resolve()
+    return root, (path.parent.resolve() / path.name).relative_to(root).as_posix()
 
 
 def blob(root, commit, path, deadline=None):

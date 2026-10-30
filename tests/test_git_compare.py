@@ -69,6 +69,28 @@ class GitComparisonTest(unittest.TestCase):
         self.commit('later')
         self.assertEqual(self.history().default, merge)
 
+    def test_repository_directory_alias(self):
+        alias = self.root.parent / (self.root.name + '-alias')
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.addCleanup(alias.unlink)
+        result = history(alias / self.path.name, '/alias.md', DocumentRoots(alias))
+        self.assertEqual(result.default, self.second)
+
+    def test_repository_directory_ending_in_newline(self):
+        nested = self.root / 'repo\n'
+        nested.mkdir()
+        subprocess.check_call(['git', '-C', str(nested), 'init', '-q'])
+        subprocess.check_call(['git', '-C', str(nested), 'config', 'user.email', 'test@example.com'])
+        subprocess.check_call(['git', '-C', str(nested), 'config', 'user.name', 'Test'])
+        document = nested / 'a.md'
+        document.write_text('first')
+        subprocess.check_call(['git', '-C', str(nested), 'add', 'a.md'])
+        subprocess.check_call(['git', '-C', str(nested), 'commit', '-qm', 'first'])
+        document.write_text('dirty')
+        result = history(document, '/a.md', DocumentRoots(nested))
+        self.assertEqual(len(result.revisions), 1)
+        self.assertIsNotNone(result.default)
+
     def test_git_timeout_after_stdout_closes(self):
         fake = self.root / 'bin'
         fake.mkdir()
