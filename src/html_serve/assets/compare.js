@@ -68,37 +68,73 @@ function blocks(doc) {
   const groups = [];
   const blockTags = new Set("ADDRESS ARTICLE ASIDE BLOCKQUOTE DIV DL DT DD FIGCAPTION FOOTER H1 H2 H3 H4 H5 H6 HEADER LI MAIN NAV P PRE SECTION TABLE TD TH TR".split(" "));
   let group;
-  function add(element, text, node, extra = "") {
+  function add(element, part, extra = "") {
     if (!group || group.element !== element || extra) {
-      group = { element, kind: element.tagName, text: "", nodes: [], extra };
+      group = { element, kind: element.tagName, parts: [], extra };
       groups.push(group);
     }
-    if (node) group.nodes.push({ node, start: group.text.length, end: group.text.length + text.length });
-    group.text += text;
+    if (part) group.parts.push(part);
     if (extra) group = null;
   }
   function visit(element, owner) {
     if (element.nodeType === Node.TEXT_NODE) {
-      if (element.data.trim() || owner.tagName === "PRE" || group?.element === owner) add(owner, element.data, element);
+      add(owner, { node: element, whitespace: doc.defaultView.getComputedStyle(element.parentElement).whiteSpace });
       return;
     }
     if (element.nodeType !== Node.ELEMENT_NODE || element.matches("script,style,noscript,template")) return;
     const style = doc.defaultView.getComputedStyle(element);
     if (style.display === "none" || style.visibility === "hidden") return;
     if (element.hasAttribute("data-docserve-kind")) {
-      add(element, "", null, `${element.dataset.docserveKind}:${element.dataset.docserveSource}`);
+      add(element, null, `${element.dataset.docserveKind}:${element.dataset.docserveSource}`);
       return;
     }
     if (element.matches("img,svg,video,audio,canvas,hr")) {
-      add(element, "", null, `${element.tagName}:${element.getAttribute("src") || element.getAttribute("alt") || ""}`);
+      add(element, null, `${element.tagName}:${element.getAttribute("src") || element.getAttribute("alt") || ""}`);
       return;
     }
+    if (element.tagName === "BR") { add(owner, { node: element }); return; }
     const current = blockTags.has(element.tagName) ? element : owner;
     for (const child of element.childNodes) visit(child, current);
   }
   visit(root, root);
   if (groups.length > 1500) throw new Error("Document has too many blocks to compare.");
-  return groups.map(block => {
+  const normalized = groups.map(block => {
+    block.text = "";
+    block.spans = [];
+    let pending;
+    function append(text, from, to) {
+      block.spans.push({ start: block.text.length, end: block.text.length + text.length, from, to });
+      block.text += text;
+    }
+    function flushSpace() {
+      if (pending && block.text && !block.text.endsWith("\n")) append(" ", pending.from, pending.to);
+      pending = null;
+    }
+    for (const { node, whitespace } of block.parts) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        pending = null;
+        const index = [...node.parentNode.childNodes].indexOf(node);
+        append("\n", { node: node.parentNode, offset: index }, { node: node.parentNode, offset: index + 1 });
+        continue;
+      }
+      const preserve = ["pre", "pre-wrap", "break-spaces"].includes(whitespace);
+      const pattern = preserve ? /[\s\S]+/g : whitespace === "pre-line" ? /\n|[ \t\r\f]+|[^ \t\r\n\f]+/g : /[ \t\r\n\f]+|[^ \t\r\n\f]+/g;
+      for (const match of node.data.matchAll(pattern)) {
+        const text = match[0];
+        const from = { node, offset: match.index }, to = { node, offset: match.index + text.length };
+        if (!preserve && /^[ \t\r\n\f]+$/.test(text) && !(whitespace === "pre-line" && text === "\n")) {
+          pending = { from: pending?.from || from, to };
+        } else {
+          if (text.startsWith("\n")) pending = null; else flushSpace();
+          append(text, from, to);
+        }
+      }
+    }
+    delete block.parts;
+    return block;
+  }).filter(block => block.text || block.extra);
+  return normalized.map(block => {
+    block.exclusive = !normalized.some(other => other !== block && block.element.contains(other.element));
     const links = [...block.element.querySelectorAll("a[href]")].map(el => el.getAttribute("href")).join(" ");
     block.key = block.kind + "\0" + block.text + "\0" + block.extra + "\0" + links;
     return block;
@@ -121,12 +157,18 @@ function pairs(a, b, key = value => value.key) {
 }
 
 function range(block, start, end) {
-  const first = block.nodes.find(part => part.end > start);
-  const last = block.nodes.findLast(part => part.start < end);
+  const first = block.spans.find(part => part.end > start);
+  const last = block.spans.findLast(part => part.start < end);
   if (!first || !last) return null;
+  function point(span, offset, edge) {
+    if (span.from.node === span.to.node && span.to.offset - span.from.offset === span.end - span.start)
+      return { node: span.from.node, offset: span.from.offset + offset - span.start };
+    return span[edge];
+  }
+  const from = point(first, start, "from"), to = point(last, end, "to");
   const result = block.element.ownerDocument.createRange();
-  result.setStart(first.node, Math.max(0, start - first.start));
-  result.setEnd(last.node, Math.min(last.node.length, end - last.start));
+  result.setStart(from.node, from.offset);
+  result.setEnd(to.node, to.offset);
   return result;
 }
 
@@ -135,10 +177,17 @@ function tokens(text) {
 }
 
 function compare(oldBlocks, newBlocks) {
-  const changes = [], oldRanges = [], newRanges = [];
+  const changes = [], oldRanges = [], newRanges = [], oldWholeRanges = [], newWholeRanges = [];
   const anchors = [[-1, -1], ...pairs(oldBlocks, newBlocks), [oldBlocks.length, newBlocks.length]];
+  function paintBlock(block, side) {
+    if (block.exclusive) block.element.classList.add(side === "old" ? "docserve-deleted" : "docserve-added");
+    else {
+      const r = range(block, 0, block.text.length);
+      if (r) (side === "old" ? oldWholeRanges : newWholeRanges).push(r);
+    }
+  }
   function whole(block, side) {
-    block.element.classList.add(side === "old" ? "docserve-deleted" : "docserve-added");
+    paintBlock(block, side);
     changes.push({ old: side === "old" ? block : null, new: side === "new" ? block : null });
   }
   function edit(oldBlock, newBlock) {
@@ -146,8 +195,15 @@ function compare(oldBlocks, newBlocks) {
     if (a.length * b.length > 100000) { whole(oldBlock, "old"); whole(newBlock, "new"); return; }
     const matched = pairs(a, b, token => token.text);
     const oldMatched = new Set(matched.map(pair => pair[0])), newMatched = new Set(matched.map(pair => pair[1]));
-    a.forEach((token, i) => { if (!oldMatched.has(i)) { const r = range(oldBlock, token.start, token.end); if (r) oldRanges.push(r); } });
-    b.forEach((token, i) => { if (!newMatched.has(i)) { const r = range(newBlock, token.start, token.end); if (r) newRanges.push(r); } });
+    for (const [block, tokens, matched, ranges, side] of [[oldBlock, a, oldMatched, oldRanges, "old"], [newBlock, b, newMatched, newRanges, "new"]]) {
+      tokens.forEach((token, i) => {
+        if (matched.has(i)) return;
+        const r = range(block, token.start, token.end);
+        if (!r) return;
+        ranges.push(r);
+        if (r.cloneContents().querySelector("br") && ![...r.getClientRects()].some(rect => rect.width)) paintBlock(block, side);
+      });
+    }
     if (a.length === oldMatched.size && b.length === newMatched.size) { whole(oldBlock, "old"); whole(newBlock, "new"); }
     else changes.push({ old: oldBlock, new: newBlock });
   }
@@ -159,17 +215,34 @@ function compare(oldBlocks, newBlocks) {
     old.slice(i).forEach(block => whole(block, "old"));
     current.slice(i).forEach(block => whole(block, "new"));
   }
-  return { changes, oldRanges, newRanges, anchors: anchors.slice(1, -1).map(([i, j]) => [oldBlocks[i], newBlocks[j]]) };
+  return { changes, oldRanges, newRanges, oldWholeRanges, newWholeRanges, anchors: anchors.slice(1, -1).map(([i, j]) => [oldBlocks[i], newBlocks[j]]) };
 }
 
-function install(doc, name, ranges) {
+function install(doc, name, ranges, wholeRanges) {
   const style = doc.createElement("style");
-  style.textContent = `.docserve-deleted { background-color: #ffd9d9 !important; } .docserve-added { background-color: #d8f5dc !important; } ::highlight(docserve-old) { background-color: #ff9a9a; color: inherit; } ::highlight(docserve-new) { background-color: #9de7a9; color: inherit; }`;
+  style.textContent = `.docserve-deleted { background-color: #ffd9d9 !important; } .docserve-added { background-color: #d8f5dc !important; } ::highlight(docserve-old) { background-color: #ff9a9a; color: inherit; } ::highlight(docserve-new) { background-color: #9de7a9; color: inherit; } ::highlight(docserve-old-whole) { background-color: #ffd9d9; color: inherit; } ::highlight(docserve-new-whole) { background-color: #d8f5dc; color: inherit; }`;
   doc.head.append(style);
   if (doc.defaultView.CSS?.highlights && doc.defaultView.Highlight) {
     doc.defaultView.CSS.highlights.set(name, new doc.defaultView.Highlight(...ranges));
+    doc.defaultView.CSS.highlights.set(`${name}-whole`, new doc.defaultView.Highlight(...wholeRanges));
   } else {
-    for (const range of ranges) range.commonAncestorContainer.parentElement?.classList.add(name === "docserve-old" ? "docserve-deleted" : "docserve-added");
+    for (const range of [...ranges, ...wholeRanges]) {
+      const walker = doc.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT);
+      const nodes = range.commonAncestorContainer.nodeType === Node.TEXT_NODE ? [range.commonAncestorContainer] : [];
+      while (walker.nextNode()) if (range.intersectsNode(walker.currentNode)) nodes.push(walker.currentNode);
+      for (const node of nodes.reverse()) {
+        const start = node === range.startContainer ? range.startOffset : 0;
+        const end = node === range.endContainer ? range.endOffset : node.length;
+        if (end <= start) continue;
+        const selected = doc.createRange();
+        selected.setStart(node, start);
+        selected.setEnd(node, end);
+        const mark = doc.createElement("span");
+        mark.style.all = "unset";
+        mark.className = name === "docserve-old" ? "docserve-deleted" : "docserve-added";
+        selected.surroundContents(mark);
+      }
+    }
   }
 }
 
@@ -180,6 +253,8 @@ function stale() {
     const doc = frame.contentDocument;
     doc.defaultView.CSS?.highlights?.delete("docserve-old");
     doc.defaultView.CSS?.highlights?.delete("docserve-new");
+    doc.defaultView.CSS?.highlights?.delete("docserve-old-whole");
+    doc.defaultView.CSS?.highlights?.delete("docserve-new-whole");
     doc.querySelectorAll(".docserve-added, .docserve-deleted").forEach(element => element.classList.remove("docserve-added", "docserve-deleted"));
   }
   phase("stale", "Document changed. Refresh comparison to update marks.");
@@ -195,14 +270,16 @@ async function refresh() {
   state.observers = [];
   phase("loading", "Loading rendered documents...");
   try {
-    const response = await fetch(revision.url, { method: "HEAD", signal: state.abort.signal });
-    if (!response.ok) throw new Error("The selected revision is no longer available.");
+    const [historical, current] = await Promise.all([revision.url, documentURL].map(url =>
+      fetch(standalone(url), { method: "HEAD", cache: "no-store", signal: state.abort.signal })));
+    if (!historical.ok) throw new Error("The selected revision is no longer available.");
+    if (!current.ok) throw new Error("The current document is no longer available.");
     await Promise.all([loadFrame(before, revision.url, state.abort.signal), loadFrame(after, documentURL, state.abort.signal)]);
     await Promise.all([ready(before), ready(after)]);
     if (generation !== state.generation) return;
     const result = compare(blocks(before.contentDocument), blocks(after.contentDocument));
-    install(before.contentDocument, "docserve-old", result.oldRanges);
-    install(after.contentDocument, "docserve-new", result.newRanges);
+    install(before.contentDocument, "docserve-old", result.oldRanges, result.oldWholeRanges);
+    install(after.contentDocument, "docserve-new", result.newRanges, result.newWholeRanges);
     state.changes = result.changes;
     state.anchors = result.anchors;
     state.index = -1;
@@ -219,7 +296,7 @@ async function refresh() {
 }
 
 function navigate(offset) {
-  state.index = (state.index + offset + state.changes.length) % state.changes.length;
+  state.index = state.index === -1 ? (offset < 0 ? state.changes.length - 1 : 0) : (state.index + offset + state.changes.length) % state.changes.length;
   const change = state.changes[state.index];
   for (const block of [change.old, change.new]) block?.element.scrollIntoView({ block: "center" });
   status.textContent = `Change ${state.index + 1} of ${state.changes.length}.`;

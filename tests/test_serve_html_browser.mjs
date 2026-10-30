@@ -18,6 +18,23 @@ const filename = "한글 review #1's ?.MD";
 const htmlFilename = 'review # 한?.HTML';
 let directory, extraDirectory, cacheDirectory, server, images, browser, baseURL;
 let serverOutput = "";
+const comparisonCases = {
+  "nested.html": ['<div>Deleted introduction.<p>Unchanged paragraph</p></div><p>Other unchanged paragraph</p>', '<div><p>Unchanged paragraph</p>Added conclusion.</div><p>Other unchanged paragraph</p>'],
+  "bare.html": ['Deleted introduction.<p>Unchanged paragraph</p><p>Other unchanged paragraph</p>', '<p>Unchanged paragraph</p>Added conclusion.<p>Other unchanged paragraph</p>'],
+  "break.html": ['<p>Alpha<br>Beta</p>', '<p>AlphaBeta</p>'],
+  "break-space.html": ['<p>Alpha<br>Beta</p>', '<p>Alpha Beta</p>'],
+  "collapsed.html": ['<p>Alpha\n  Beta</p>', '<p>Alpha Beta</p>'],
+  "inline-space.html": ['<p>  Alpha \n <em> \t Beta </em>\n Gamma  </p>', '<p>Alpha <em>Beta</em> Gamma</p>'],
+  "mapped-edit.html": ['<p>  Alpha \n <em> \t old </em>\n Gamma  </p>', '<p>Alpha <em>new</em> Gamma</p>'],
+  "inline-word.html": ['<p>Alpha old<em>word</em> suffix</p><p>Unchanged paragraph</p>', '<p>Alpha new<em>word</em> suffix</p><p>Unchanged paragraph</p>'],
+  "pre.html": ['<pre>Alpha\n  Beta</pre>', '<pre>Alpha Beta</pre>'],
+  "pre-wrap.html": ['<p style="white-space:pre-wrap"> Alpha\n  Beta </p>', '<p style="white-space:pre-wrap"> Alpha Beta </p>'],
+  "break-spaces.html": ['<p style="white-space:break-spaces">Alpha  Beta</p>', '<p style="white-space:break-spaces">Alpha Beta</p>'],
+  "pre-line.html": ['<p style="white-space:pre-line"> Alpha \n  Beta </p>', '<p style="white-space:pre-line">Alpha\nBeta</p>'],
+  "nbsp.html": ['<p>Alpha&nbsp;&nbsp;Beta</p>', '<p>Alpha Beta</p>'],
+  "navigation.html": ['<p>First old</p><hr><p>Second old</p><hr><p>Third old</p>', '<p>First new</p><hr><p>Second new</p><hr><p>Third new</p>'],
+  "missing.html": ['<p>Old document</p>', '<p>New document</p>'],
+};
 
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-"));
@@ -127,10 +144,12 @@ before(async () => {
   await writeFile(path.join(compareDir, "history #?.md"), "# History\n\nThe old word remains.\n\nDeleted paragraph.\n");
   await writeFile(path.join(compareDir, "style.css"), "body { color: rgb(10, 20, 30); }");
   await writeFile(path.join(compareDir, "page.html"), '<link rel="stylesheet" href="style.css"><div>Old rendered text</div><script>document.body.dataset.ran = "yes"</script>');
+  for (const [name, versions] of Object.entries(comparisonCases)) await writeFile(path.join(compareDir, name), versions[0]);
   git("add", "."); git("commit", "-qm", "first");
   await writeFile(path.join(compareDir, "style.css"), "body { color: rgb(40, 50, 60); }");
   await writeFile(path.join(compareDir, "page.html"), '<link rel="stylesheet" href="style.css"><div>New rendered text</div><script>document.body.dataset.ran = "yes"</script>');
   await writeFile(path.join(compareDir, "history #?.md"), "# History\n\nThe new word remains.\n\nAdded paragraph.\n");
+  for (const [name, versions] of Object.entries(comparisonCases)) await writeFile(path.join(compareDir, name), versions[1]);
   git("add", "."); git("commit", "-qm", "second");
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
@@ -1315,4 +1334,131 @@ test("compares active HTML and commit-relative styles", async () => {
   await page.waitForFunction(() => document.querySelector("#compare-status").textContent.includes("Refresh"));
   assert.equal(await current.locator("body").evaluate(() => CSS.highlights.has("docserve-new")), false);
   await page.close();
+});
+
+async function openComparison(page, name) {
+  await page.goto(`${baseURL}__serve_html__/compare.html?${new URLSearchParams({ url: `/compare-fixture/${name}` })}`);
+  await page.waitForFunction(() => document.querySelector("#compare-status").textContent.includes("changes."));
+}
+
+test("comparison whole-block colors exclude unchanged child blocks", async () => {
+  const page = await browser.newPage();
+  try {
+    for (const name of ["nested.html", "bare.html"]) {
+      await openComparison(page, name);
+      assert.equal(await page.locator("#compare-status").innerText(), "2 changes.");
+      for (const [side, expected] of [["before", "Deleted introduction."], ["after", "Added conclusion."]]) {
+        const painted = await page.frameLocator(`#compare-${side}`).locator("body").evaluate(() => ({
+          text: [...CSS.highlights.values()].flatMap(highlight => [...highlight].map(range => range.toString())),
+          blocks: [...document.querySelectorAll(".docserve-deleted, .docserve-added")].map(element => element.textContent),
+          paragraphs: [...document.querySelectorAll("p")].map(element => getComputedStyle(element).backgroundColor),
+        }));
+        assert.deepEqual(painted.text, [expected], name);
+        assert.deepEqual(painted.blocks, [], name);
+        assert.ok(painted.paragraphs.every(color => color === "rgba(0, 0, 0, 0)"), name);
+      }
+      await page.frameLocator("#compare-after").locator("p").first().evaluate(element => { element.textContent = "Changed later"; });
+      await page.waitForFunction(() => document.querySelector("#compare-status").textContent.includes("Refresh"));
+      assert.equal(await page.frameLocator("#compare-before").locator("body").evaluate(() => CSS.highlights.size), 0);
+    }
+  } finally { await page.close(); }
+});
+
+test("comparison retains rendered line breaks", async () => {
+  const page = await browser.newPage();
+  try {
+    for (const name of ["break.html", "break-space.html"]) {
+      await openComparison(page, name);
+      assert.equal(await page.locator("#compare-status").innerText(), "1 changes.", name);
+      assert.ok(await page.frameLocator("#compare-before").locator("body").evaluate(() =>
+        [...CSS.highlights.values()].some(highlight => [...highlight].some(range => range.cloneContents().querySelector("br")))));
+      if (name === "break-space.html") assert.equal(await page.frameLocator("#compare-before").locator("p").evaluate(element =>
+        getComputedStyle(element).backgroundColor), "rgb(255, 217, 217)");
+    }
+  } finally { await page.close(); }
+});
+
+test("comparison fallback colors only changed text across inline nodes", async () => {
+  const page = await browser.newPage();
+  await page.addInitScript(() => Object.defineProperty(CSS, "highlights", { value: undefined }));
+  try {
+    for (const name of ["nested.html", "bare.html", "inline-word.html"]) {
+      await openComparison(page, name);
+      for (const [side, expected] of [["before", name === "inline-word.html" ? "oldword" : "Deleted introduction."], ["after", name === "inline-word.html" ? "newword" : "Added conclusion."]]) {
+        const painted = await page.frameLocator(`#compare-${side}`).locator("body").evaluate(() =>
+          [...document.querySelectorAll(".docserve-deleted, .docserve-added")].map(element => ({
+            text: element.textContent, color: getComputedStyle(element).backgroundColor,
+          })));
+        assert.equal(painted.map(mark => mark.text).join(""), expected, name);
+        assert.ok(painted.every(mark => mark.color !== "rgba(0, 0, 0, 0)"), name);
+      }
+    }
+  } finally { await page.close(); }
+});
+
+test("comparison normalizes collapsed whitespace across inline nodes", async () => {
+  const page = await browser.newPage();
+  try {
+    for (const name of ["collapsed.html", "inline-space.html", "pre-line.html"]) {
+      await openComparison(page, name);
+      assert.equal(await page.locator("#compare-status").innerText(), "0 changes.", name);
+      assert.equal(await page.locator("#compare-next").isDisabled(), true);
+    }
+    await openComparison(page, "mapped-edit.html");
+    assert.equal(await page.locator("#compare-status").innerText(), "1 changes.");
+    for (const [side, expected] of [["before", "old"], ["after", "new"]]) {
+      assert.deepEqual(await page.frameLocator(`#compare-${side}`).locator("body").evaluate(() =>
+        [...CSS.highlights.values()].flatMap(highlight => [...highlight].map(range => range.toString()))), [expected]);
+    }
+  } finally { await page.close(); }
+});
+
+test("comparison preserves preformatted and nonbreaking whitespace", async () => {
+  const page = await browser.newPage();
+  try {
+    for (const [name, whitespace] of [["pre.html", "\n  "], ["pre-wrap.html", "\n  "], ["break-spaces.html", "  "], ["nbsp.html", "\u00a0\u00a0"]]) {
+      await openComparison(page, name);
+      assert.equal(await page.locator("#compare-status").innerText(), "1 changes.", name);
+      assert.deepEqual(await page.frameLocator("#compare-before").locator("body").evaluate(() =>
+        [...CSS.highlights.values()].flatMap(highlight => [...highlight].map(range => range.toString()))), [whitespace], name);
+    }
+  } finally { await page.close(); }
+});
+
+test("comparison navigation starts at the first or last change", async () => {
+  const page = await browser.newPage();
+  try {
+    await openComparison(page, "navigation.html");
+    assert.equal(await page.locator("#compare-status").innerText(), "3 changes.");
+    await page.locator("#compare-prev").click();
+    assert.equal(await page.locator("#compare-status").innerText(), "Change 3 of 3.");
+    await page.locator("#compare-next").click();
+    assert.equal(await page.locator("#compare-status").innerText(), "Change 1 of 3.");
+    await page.locator("#compare-refresh").click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "3 changes.");
+    await page.locator("#compare-next").click();
+    assert.equal(await page.locator("#compare-status").innerText(), "Change 1 of 3.");
+    await page.locator("#compare-prev").click();
+    assert.equal(await page.locator("#compare-status").innerText(), "Change 3 of 3.");
+  } finally { await page.close(); }
+});
+
+test("comparison refresh reports a removed current document", async () => {
+  const page = await browser.newPage();
+  const file = path.join(directory, "compare-fixture/missing.html");
+  try {
+    await openComparison(page, "missing.html");
+    await rm(file);
+    await page.locator("#compare-refresh").click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent.includes("no longer available"));
+    assert.match(await page.locator("#compare-status").innerText(), /current document/);
+    assert.equal(await page.locator("#compare-next").isDisabled(), true);
+    assert.doesNotMatch(await page.frameLocator("#compare-after").locator("body").innerText(), /Error response|404/);
+    await writeFile(file, comparisonCases["missing.html"][1]);
+    await page.locator("#compare-refresh").click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "1 changes.");
+  } finally {
+    await writeFile(file, comparisonCases["missing.html"][1]);
+    await page.close();
+  }
 });
