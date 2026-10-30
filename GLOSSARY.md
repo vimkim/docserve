@@ -38,3 +38,8 @@ _Avoid_: Recently modified (which describes changes to file contents or director
 
 **Recently updated**:
 Files ordered by their latest modification time, regardless of whether the reader has visited them.
+
+**Diff overview ruler**:
+A narrow map beside a Git comparison pane. Colored marks locate changed content
+and jump to a change when selected. An outline shows the visible document area.
+_Avoid_: Source line ruler, which implies source line numbers in a rendered comparison.

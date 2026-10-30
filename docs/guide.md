@@ -277,14 +277,34 @@ HTML remains visible with links to its directory and standalone page.
 ### Compare Git versions
 
 Click **Compare with previous Git version** in the document controls to compare
-rendered content. The left pane shows a committed version and the right pane
-shows the working file. Choose another commit in **Previous version**. Use the
-change buttons to navigate, or turn off **Sync scrolling** to scroll each pane
-independently.
+rendered content. The left pane starts at a committed version. The right pane
+starts at **Current working file**. Choose a commit in **Left version** and
+**Right version** to compare two committed versions. Each side has **Previous**
+and **Next** version buttons. Previous selects an older version, and Next selects
+a newer version. Version steps stop at the available boundaries.
+
+The left commit must be older than the right commit in the available Git history.
+The dropdowns disable choices that would break this order. To move both sides
+farther back, select an older left version first. **Current working file** remains
+available on the right and follows all committed versions in this order.
+
+Click a colored mark in the narrow **diff overview ruler** beside either pane
+to jump to that change. Red marks identify removed content on the left, and green
+marks identify added content on the right. The outlined area shows the visible
+part of that document. When changes are too close to select individually, click
+their shared marker to choose a change from a list. The ruler uses rendered
+document positions, not source line numbers.
+
+Use **Previous change** and **Next change** to step through individual changes.
+Turn off **Sync scrolling** to scroll each pane independently.
 
 When the working file differs from its latest commit, the comparison starts at
 that commit. Otherwise it starts at the preceding distinct committed version.
-The selector follows the first-parent Git history, including merge resolutions.
+If no distinct preceding version exists, it compares the newest commit with the
+working file and can report zero changes.
+The dropdowns include up to 100 revisions from the document's first-parent Git
+history, including merge resolutions and revisions before a rename. Commit
+timestamps do not determine the older-left order.
 The comparison does not change the repository. Relative
 assets in the historical document come from the selected commit. Root-relative
 and external assets can still refer to their original locations. HTML scripts

@@ -33,8 +33,33 @@ const comparisonCases = {
   "pre-line.html": ['<p style="white-space:pre-line"> Alpha \n  Beta </p>', '<p style="white-space:pre-line">Alpha\nBeta</p>'],
   "nbsp.html": ['<p>Alpha&nbsp;&nbsp;Beta</p>', '<p>Alpha Beta</p>'],
   "navigation.html": ['<p>First old</p><hr><p>Second old</p><hr><p>Third old</p>', '<p>First new</p><hr><p>Second new</p><hr><p>Third new</p>'],
+  "mobile-tall.html": ["old", "new"].map(word => `<div style="height:600px"></div><p>${word} ${"unchanged words ".repeat(60)}</p><div style="height:600px"></div>`),
+  "bare-whole-long.html": ["Removed introduction.", "Added conclusion."].map((text, index) => `<div style="height:1600px"></div>${index === 0 ? text : ""}<p>Shared paragraph</p>${index === 1 ? text : ""}<div style="height:400px"></div>`),
   "missing.html": ['<p>Old document</p>', '<p>New document</p>'],
 };
+
+function longComparison(version, markdown = false) {
+  return Array.from({ length: 120 }, (_, index) => {
+    const text = [5, 60, 110].includes(index) ? `Changed ${index} version ${version}` : `Unchanged paragraph ${index}`;
+    return markdown ? `${text}\n\n` : `<p style="min-height:60px">${text}</p>`;
+  }).join("");
+}
+
+function reorderedComparison(version) {
+  return `<style>body { height: 8000px; } .a { position: absolute; top: 6000px; height: 1000px; } .b { position: absolute; top: 1000px; }</style><p class="a">First version ${version}<br>${Array(50).fill("Line").join("<br>")}</p><hr><p class="b">Second version ${version}</p>`;
+}
+
+function lateComparison(version) {
+  return longComparison(version).replace('<p style="min-height:60px">Unchanged paragraph 75</p>', '<img loading="lazy" src="/late.svg"><p style="min-height:60px">Unchanged paragraph 75</p>');
+}
+
+function bareComparison(version) {
+  return Array.from({ length: 100 }, (_, index) => `${index === 80 ? `Bare version ${version}` : ""}<p style="min-height:60px">Anchor ${index}</p>`).join("");
+}
+
+function denseComparison(version) {
+  return Array.from({ length: 24 }, (_, index) => `<p>Change ${index} version ${version}</p><p>Anchor ${index}</p>`).join("");
+}
 
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "serve-html-browser-"));
@@ -145,12 +170,33 @@ before(async () => {
   await writeFile(path.join(compareDir, "style.css"), "body { color: rgb(10, 20, 30); }");
   await writeFile(path.join(compareDir, "page.html"), '<link rel="stylesheet" href="style.css"><div>Old rendered text</div><script>document.body.dataset.ran = "yes"</script>');
   for (const [name, versions] of Object.entries(comparisonCases)) await writeFile(path.join(compareDir, name), versions[0]);
+  await writeFile(path.join(compareDir, "long.html"), longComparison(1));
+  await writeFile(path.join(compareDir, "long.md"), longComparison(1, true));
+  await writeFile(path.join(compareDir, "dense.html"), denseComparison(1));
+  await writeFile(path.join(compareDir, "reordered.html"), reorderedComparison(1));
+  await writeFile(path.join(compareDir, "late.html"), lateComparison(1));
+  await writeFile(path.join(compareDir, "bare-long.html"), bareComparison(1));
+  await writeFile(path.join(compareDir, "one-sided.html"), '<div style="height:2400px"></div><h2>Removed heading</h2><p>Shared paragraph</p>');
+  await writeFile(path.join(compareDir, "single.html"), "<p>Only committed version</p>");
   git("add", "."); git("commit", "-qm", "first");
   await writeFile(path.join(compareDir, "style.css"), "body { color: rgb(40, 50, 60); }");
   await writeFile(path.join(compareDir, "page.html"), '<link rel="stylesheet" href="style.css"><div>New rendered text</div><script>document.body.dataset.ran = "yes"</script>');
   await writeFile(path.join(compareDir, "history #?.md"), "# History\n\nThe new word remains.\n\nAdded paragraph.\n");
   for (const [name, versions] of Object.entries(comparisonCases)) await writeFile(path.join(compareDir, name), versions[1]);
+  await writeFile(path.join(compareDir, "long.html"), longComparison(2));
+  await writeFile(path.join(compareDir, "long.md"), longComparison(2, true));
+  await writeFile(path.join(compareDir, "dense.html"), denseComparison(2));
+  await writeFile(path.join(compareDir, "reordered.html"), reorderedComparison(2));
+  await writeFile(path.join(compareDir, "late.html"), lateComparison(2));
+  await writeFile(path.join(compareDir, "bare-long.html"), bareComparison(2));
+  await writeFile(path.join(compareDir, "one-sided.html"), '<div style="height:2400px"></div><p>Shared paragraph</p><h3>Added heading</h3>');
   git("add", "."); git("commit", "-qm", "second");
+  await writeFile(path.join(compareDir, "long.html"), longComparison(3));
+  await writeFile(path.join(compareDir, "long.md"), longComparison(3, true));
+  git("add", "long.html", "long.md"); git("commit", "-qm", "third");
+  await writeFile(path.join(compareDir, "long.html"), longComparison(4));
+  await writeFile(path.join(compareDir, "long.md"), longComparison(4, true));
+  await writeFile(path.join(compareDir, "untracked.html"), "<p>No history</p>");
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
     "--directory", directory, "--bind", "127.0.0.1"], {
@@ -1461,4 +1507,241 @@ test("comparison refresh reports a removed current document", async () => {
     await writeFile(file, comparisonCases["missing.html"][1]);
     await page.close();
   }
+});
+
+
+test("comparison version selectors keep an ordered pair and allow equal content", async () => {
+  const page = await browser.newPage();
+  try {
+    await openComparison(page, "long.html");
+    const left = page.getByLabel("Left version", { exact: true });
+    const right = page.getByLabel("Right version", { exact: true });
+    assert.equal(await right.locator("option:checked").innerText(), "Current working file");
+    assert.match(await left.locator("option:checked").innerText(), /third/);
+    assert.equal(await page.getByRole("button", { name: "Next right version" }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Next left version" }).isDisabled(), true);
+    assert.equal(await right.locator('option[value="1"]').isDisabled(), true);
+    await page.getByRole("button", { name: "Previous left version" }).click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "3 changes.");
+    assert.match(await left.locator("option:checked").innerText(), /second/);
+    await page.getByRole("button", { name: "Previous right version" }).click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "3 changes.");
+    assert.match(await right.locator("option:checked").innerText(), /third/);
+    assert.match(await page.frameLocator("#compare-before").locator("body").innerText(), /version 2/);
+    assert.match(await page.frameLocator("#compare-after").locator("body").innerText(), /version 3/);
+    assert.equal(await left.locator('option[value="1"]').isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Previous right version" }).isDisabled(), true);
+    await page.getByRole("button", { name: "Previous left version" }).click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "3 changes.");
+    assert.equal(await page.getByRole("button", { name: "Previous left version" }).isDisabled(), true);
+    await openComparison(page, "single.html");
+    assert.equal(await page.locator("#compare-status").innerText(), "0 changes.");
+    assert.match(await left.locator("option:checked").innerText(), /first/);
+    await page.goto(`${baseURL}__serve_html__/compare.html?${new URLSearchParams({ url: "/compare-fixture/untracked.html" })}`);
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent !== "Loading history...");
+    assert.equal(await left.isDisabled(), true);
+    assert.equal(await page.locator("#compare-next").isDisabled(), true);
+  } finally { await page.close(); }
+});
+
+test("comparison rulers navigate long HTML and Markdown and track scrolling", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 760 } });
+  try {
+    for (const name of ["long.html", "long.md"]) {
+      await openComparison(page, name);
+      await page.waitForFunction(() => document.querySelectorAll("#compare-old-ruler .mark").length === 3);
+      assert.equal(await page.locator("#compare-new-ruler .mark").count(), 3);
+      const marks = await page.locator("#compare-old-ruler .mark").evaluateAll(items => items.map(item => item.offsetTop));
+      assert.ok(marks[0] < marks[1] && marks[1] < marks[2], name);
+      await page.locator("#compare-old-ruler .band").last().click();
+      assert.equal(await page.locator("#compare-status").innerText(), "Change 3 of 3.");
+      for (const frame of ["before", "after"]) {
+        const position = await page.frameLocator(`#compare-${frame}`).locator("body").evaluate(() => {
+          const target = [...document.querySelectorAll("p")].find(element => element.textContent.includes("Changed 110"));
+          return Math.abs(target.getBoundingClientRect().top - innerHeight / 2);
+        });
+        assert.ok(position < 130, `${name} ${frame} position ${position}`);
+      }
+      await page.locator("#compare-prev").click();
+      assert.equal(await page.locator("#compare-status").innerText(), "Change 2 of 3.");
+      const top = await page.locator("#compare-old-ruler .viewport").evaluate(el => el.offsetTop);
+      assert.ok(top > 0);
+      await page.setViewportSize({ width: 1100, height: 650 });
+      await page.waitForFunction(() => document.querySelector("#compare-old-ruler .viewport").offsetHeight > 0);
+      await page.frameLocator("#compare-after").locator("p").first().evaluate(el => { el.textContent = "Later mutation"; });
+      await page.waitForFunction(() => document.querySelector("#compare-status").textContent.includes("Refresh"));
+      assert.equal(await page.locator(".ruler .mark").count(), 0);
+      assert.equal(await page.locator(".ruler .band").count(), 0);
+      await page.setViewportSize({ width: 1200, height: 760 });
+    }
+  } finally { await page.close(); }
+});
+
+for (const fallback of [false, true]) test(`comparison ruler shows changed text in a tall paragraph on mobile${fallback ? " with fallback highlighting" : ""}`, async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 700 } });
+  if (fallback) await page.addInitScript(() => Object.defineProperty(CSS, "highlights", { value: undefined }));
+  try {
+    await openComparison(page, "mobile-tall.html");
+    await page.locator("#compare-old-ruler .band").click();
+    for (const [side, word, marker] of [["before", "old", "deleted"], ["after", "new", "added"]]) {
+      const position = await page.frameLocator(`#compare-${side}`).locator("p").evaluate((paragraph, { word, marker }) => {
+        const colored = CSS.highlights ? [...CSS.highlights.get(`docserve-${word}`)][0] : paragraph.querySelector(`.docserve-${marker}`);
+        const rect = colored.getBoundingClientRect();
+        return { text: colored.textContent ?? colored.toString(), top: rect.top, bottom: rect.bottom, height: innerHeight, scrollY };
+      }, { word, marker });
+      assert.equal(position.text, word);
+      assert.ok(position.top >= 0 && position.bottom <= position.height, `${side} changed word is outside viewport: ${JSON.stringify(position)}`);
+    }
+  } finally { await page.close(); }
+});
+
+test("comparison fallback rulers retain whole and edited bare-text geometry", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 760 } });
+  await page.addInitScript(() => Object.defineProperty(CSS, "highlights", { value: undefined }));
+  try {
+    for (const name of ["bare-long.html", "bare-whole-long.html"]) {
+      await openComparison(page, name);
+      await page.waitForFunction(() => document.querySelectorAll(".ruler .mark").length === 2);
+      for (const [side, frame, marker] of [["old", "before", "deleted"], ["new", "after", "added"]]) {
+        const colored = page.frameLocator(`#compare-${frame}`).locator(`.docserve-${marker}`);
+        const position = await colored.first().evaluate(element => {
+          const total = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight, innerHeight);
+          return (element.getBoundingClientRect().top + scrollY) / total;
+        });
+        const mark = await page.locator(`#compare-${side}-ruler .mark`).evaluate(element => ({
+          top: element.offsetTop, trackHeight: element.parentElement.clientHeight,
+        }));
+        assert.ok(Math.abs(mark.top - position * mark.trackHeight) < 2, `${name} ${side} ruler does not match colored text: ${JSON.stringify({ position, mark })}`);
+        await page.locator(`#compare-${side}-ruler .band`).click();
+        const visible = await colored.first().evaluate(element => {
+          const rect = element.getBoundingClientRect();
+          return { top: rect.top, bottom: rect.bottom, height: innerHeight };
+        });
+        assert.ok(visible.top >= 0 && visible.bottom <= visible.height, `${name} ${side} colored text is outside viewport: ${JSON.stringify(visible)}`);
+        assert.ok(await page.frameLocator(`#compare-${frame}`).locator("p").evaluateAll(elements =>
+          elements.every(element => getComputedStyle(element).backgroundColor === "rgba(0, 0, 0, 0)")));
+      }
+    }
+  } finally { await page.close(); }
+});
+
+test("comparison ruler offers each dense change to keyboard users", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 500 } });
+  try {
+    await openComparison(page, "dense.html");
+    const band = page.locator("#compare-old-ruler .band").first();
+    await band.click();
+    const chooser = page.locator(".chooser");
+    assert.ok(await chooser.locator("button").count() > 1);
+    const last = chooser.locator("button").last();
+    const label = await last.innerText();
+    await last.focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await page.locator("#compare-status").innerText(), `${label.match(/Change \d+/)[0]} of 24.`);
+    await band.click();
+    await page.keyboard.press("Escape");
+    assert.equal(await chooser.count(), 0);
+    assert.equal(await band.evaluate(el => el === document.activeElement), true);
+  } finally { await page.close(); }
+});
+
+
+test("comparison ruler targets bare text and marks only the side with content", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 760 } });
+  try {
+    await openComparison(page, "bare-long.html");
+    await page.waitForFunction(() => document.querySelectorAll("#compare-old-ruler .mark").length === 1);
+    const position = await page.locator("#compare-old-ruler .mark").evaluate(el => el.offsetTop / el.parentElement.clientHeight);
+    assert.ok(position > 0.7 && position < 0.9, `bare text mark position ${position}`);
+    await page.locator("#compare-old-ruler .band").click();
+    for (const side of ["before", "after"]) {
+      const distance = await page.frameLocator(`#compare-${side}`).locator("body").evaluate(body => {
+        const text = [...body.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.includes("Bare version"));
+        const range = document.createRange(); range.selectNodeContents(text);
+        return Math.abs(range.getBoundingClientRect().top - innerHeight / 2);
+      });
+      assert.ok(distance < 60, `${side} bare text position ${distance}`);
+    }
+    await openComparison(page, "one-sided.html");
+    await page.waitForFunction(() => document.querySelectorAll(".ruler .mark").length === 2);
+    assert.equal(await page.locator("#compare-old-ruler .mark").count(), 1);
+    assert.equal(await page.locator("#compare-new-ruler .mark").count(), 1);
+    await page.locator("#compare-new-ruler .band").click();
+    assert.equal(await page.locator("#compare-status").innerText(), "Change 2 of 2.");
+    await page.waitForFunction(() => ["before", "after"].every(side =>
+      document.getElementById(`compare-${side}`).contentWindow.scrollY > 1000));
+    await page.locator("#compare-prev").click();
+    assert.equal(await page.locator("#compare-status").innerText(), "Change 1 of 2.");
+  } finally { await page.close(); }
+});
+
+test("comparison clears rulers while loading and historical pairs do not require the working file", async () => {
+  const page = await browser.newPage();
+  const file = path.join(directory, "compare-fixture/long.html");
+  try {
+    await openComparison(page, "long.html");
+    await page.waitForFunction(() => document.querySelectorAll(".ruler .mark").length === 6);
+    let release;
+    const blocked = new Promise(resolve => { release = resolve; });
+    await page.route("**/*", async (route, request) => {
+      if (request.method() === "HEAD") await blocked;
+      await route.continue();
+    });
+    await page.locator("#compare-refresh").click();
+    assert.equal(await page.locator(".ruler .mark").count(), 0);
+    assert.match(await page.locator("#compare-status").innerText(), /Loading/);
+    release();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "3 changes.");
+    await page.unrouteAll();
+    await page.getByRole("button", { name: "Previous left version" }).click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "3 changes.");
+    await page.getByRole("button", { name: "Previous right version" }).click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "3 changes.");
+    await rm(file);
+    await page.locator("#compare-refresh").click();
+    await page.waitForFunction(() => document.querySelector("#compare-status").textContent === "3 changes.");
+    assert.match(await page.frameLocator("#compare-after").locator("body").innerText(), /version 3/);
+  } finally {
+    await writeFile(file, longComparison(4));
+    await page.close();
+  }
+});
+
+
+test("comparison updates ruler geometry when an image loads late", { timeout: 15000 }, async () => {
+  const page = await browser.newPage();
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  try {
+    await page.route("**/late.svg", async route => {
+      await blocked;
+      await route.fulfill({ status: 200, contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="2000"></svg>' });
+    });
+    await openComparison(page, "late.html");
+    await page.waitForFunction(() => document.querySelectorAll("#compare-new-ruler .mark").length === 3);
+    const last = page.locator("#compare-new-ruler .mark").last();
+    const before = await last.evaluate(el => el.offsetTop);
+    await page.frameLocator("#compare-after").locator("img").evaluate(img => img.scrollIntoView());
+    release();
+    await page.frameLocator("#compare-after").locator("img").evaluate(img => new Promise(resolve => img.complete ? resolve() : img.addEventListener("load", resolve, { once: true })));
+    await page.waitForFunction(previous => document.querySelector("#compare-new-ruler .mark:last-child").offsetTop > previous + 5, before);
+  } finally { release(); await page.close(); }
+});
+
+
+test("comparison ruler follows visual order and covers tall changed blocks", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 760 } });
+  try {
+    await openComparison(page, "reordered.html");
+    await page.waitForFunction(() => document.querySelectorAll("#compare-old-ruler .band").length === 2);
+    const bands = page.locator("#compare-old-ruler .band");
+    await bands.first().click();
+    assert.equal(await page.locator("#compare-status").innerText(), "Change 2 of 2.");
+    const tall = bands.last();
+    const height = await tall.evaluate(el => el.clientHeight);
+    assert.ok(height > 24);
+    await tall.click({ position: { x: 12, y: 2 } });
+    assert.equal(await page.locator("#compare-status").innerText(), "Change 1 of 2.");
+    assert.equal(await tall.getAttribute("aria-current"), "true");
+  } finally { await page.close(); }
 });

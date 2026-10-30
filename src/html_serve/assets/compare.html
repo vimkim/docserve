@@ -10,18 +10,44 @@
 <body>
   <header>
     <a id="compare-close">Back to document</a>
-    <label for="compare-revision">Previous version</label>
+    <label for="compare-revision">Left version</label>
     <select id="compare-revision" disabled></select>
+    <button id="compare-left-prev" type="button" disabled>Previous left version</button>
+    <button id="compare-left-next" type="button" disabled>Next left version</button>
+    <label for="compare-right">Right version</label>
+    <select id="compare-right" disabled></select>
+    <button id="compare-right-prev" type="button" disabled>Previous right version</button>
+    <button id="compare-right-next" type="button" disabled>Next right version</button>
     <button id="compare-refresh" type="button">Refresh comparison</button>
     <button id="compare-prev" type="button" disabled>Previous change</button>
     <button id="compare-next" type="button" disabled>Next change</button>
     <label><input id="compare-sync" type="checkbox" checked> Sync scrolling</label>
     <span id="compare-status" role="status" aria-live="polite">Loading history...</span>
   </header>
-  <p class="description">Rendered content comparison. Styles, images, canvas, and pixels are not compared. Relative historical assets use the selected commit.</p>
+  <p class="description">Rendered content comparison. Styles, images, canvas, and pixels are not compared. Relative historical assets use the selected commit. Up to 100 first-parent file revisions are available.</p>
   <div class="panes">
-    <section><h1>Previous version</h1><iframe id="compare-before" title="Previous version" data-docserve-document></iframe></section>
-    <section><h1>Current working file</h1><iframe id="compare-after" title="Current working file" data-docserve-document></iframe></section>
+    <section>
+      <h1>Left version</h1>
+      <div class="pane">
+        <iframe id="compare-before" title="Left version" data-docserve-document></iframe>
+        <div class="ruler old" id="compare-old-ruler" role="navigation" aria-label="Left change overview">
+          <div class="viewport"></div>
+          <div class="marks"></div>
+          <div class="bands"></div>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h1>Right version</h1>
+      <div class="pane">
+        <iframe id="compare-after" title="Right version" data-docserve-document></iframe>
+        <div class="ruler new" id="compare-new-ruler" role="navigation" aria-label="Right change overview">
+          <div class="viewport"></div>
+          <div class="marks"></div>
+          <div class="bands"></div>
+        </div>
+      </div>
+    </section>
   </div>
 </body>
 </html>
