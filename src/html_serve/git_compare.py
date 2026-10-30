@@ -109,9 +109,10 @@ def history(path, url, roots):
         deadline = time.monotonic() + 12
         if not path.is_file() or path.is_symlink():
             raise GitError('The document is not a regular file.')
-        if path.stat().st_size > LIMIT:
+        with path.open('rb') as stream:
+            current = stream.read(LIMIT + 1)
+        if len(current) > LIMIT:
             raise GitError('The document exceeds the size limit.')
-        current = path.read_bytes()
         root, relative = repo_for(path, deadline)
         output = git(root, 'log', '--follow', '--first-parent', '-m', '--max-count=101',
                      '--format=%x00%H%x00%cI%x00%s%x00', '--name-status', '--no-ext-diff', '--no-textconv', '-z', '--', relative, deadline=deadline)
