@@ -110,6 +110,8 @@ async function renderDocument(source) {
   for (const [index, { kind, token }] of slots.entries()) {
     const element = content.querySelector(`[data-preview-slot="${marker}-${index}"]`);
     if (!element) continue;
+    element.dataset.docserveSource = token.text;
+    element.dataset.docserveKind = kind;
     try {
       if (kind === "mermaid") {
         element.classList.add("diagram");

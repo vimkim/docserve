@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compare Git versions</title>
+  <link rel="stylesheet" href="/__serve_html__/compare.css">
+  <script type="module" src="/__serve_html__/compare.js"></script>
+</head>
+<body>
+  <header>
+    <a id="compare-close">Back to document</a>
+    <label for="compare-revision">Previous version</label>
+    <select id="compare-revision" disabled></select>
+    <button id="compare-refresh" type="button">Refresh comparison</button>
+    <button id="compare-prev" type="button" disabled>Previous change</button>
+    <button id="compare-next" type="button" disabled>Next change</button>
+    <label><input id="compare-sync" type="checkbox" checked> Sync scrolling</label>
+    <span id="compare-status" role="status" aria-live="polite">Loading history...</span>
+  </header>
+  <p class="description">Rendered content comparison. Styles, images, canvas, and pixels are not compared. Relative historical assets use the selected commit.</p>
+  <div class="panes">
+    <section><h1>Previous version</h1><iframe id="compare-before" title="Previous version" data-docserve-document></iframe></section>
+    <section><h1>Current working file</h1><iframe id="compare-after" title="Current working file" data-docserve-document></iframe></section>
+  </div>
+</body>
+</html>

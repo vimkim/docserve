@@ -1,0 +1,11 @@
+:root { color-scheme: light; font: 14px system-ui, sans-serif; }
+body { display: flex; flex-direction: column; height: 100dvh; margin: 0; background: #f3f5f7; color: #17212b; }
+header { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; padding: .7rem; background: white; border-bottom: 1px solid #cbd2d8; }
+button, select { font: inherit; padding: .35rem; }
+select { max-width: min(100%, 28rem); }
+#compare-status { flex: 1 1 100%; }
+.description { margin: .5rem .7rem; }
+.panes { display: flex; flex: 1; min-height: 0; gap: 4px; }
+section { min-width: 0; flex: 1; display: flex; flex-direction: column; background: white; }
+h1 { font-size: 1rem; margin: 0; padding: .4rem .7rem; }
+iframe { border: 0; width: 100%; flex: 1; }

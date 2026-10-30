@@ -59,6 +59,9 @@ function initialize() {
     <a id="standalone-link" target="_blank" rel="noopener" aria-label="Open standalone"><span class="standalone-label">Open standalone </span>↗</a>
     <button id="compact-view" type="button" aria-label="Compact view" title="Switch to floating controls">− <span class="compact-label">Compact view</span></button>`;
   nav.querySelector("#standalone-link").before(...extras);
+  const compareLink = document.createElement("a");
+  compareLink.textContent = "Compare with previous Git version";
+  nav.querySelector("#standalone-link").before(compareLink);
   const bannerCopy = createCopyPathButton();
   nav.querySelector("#standalone-link").before(bannerCopy);
 
@@ -70,6 +73,11 @@ function initialize() {
     <span id="compact-filename"></span>
     <button id="expand-banner" type="button" aria-label="Expand banner" title="Return to the banner">▤ <span class="expand-label">Expand banner</span></button>
     <a id="compact-standalone" target="_blank" rel="noopener" aria-label="Open standalone">↗</a>`;
+  const compactCompare = compareLink.cloneNode(true);
+  compactCompare.textContent = "⇄";
+  compactCompare.setAttribute("aria-label", "Compare with previous Git version");
+  compactCompare.title = "Compare with previous Git version";
+  floating.querySelector("#expand-banner").before(compactCompare);
   const compactCopy = createCopyPathButton();
   floating.querySelector("#expand-banner").before(compactCopy);
   const pane = document.createElement("aside");
@@ -150,6 +158,8 @@ function initialize() {
     const name = label(currentURL.pathname.split("/").filter(Boolean).pop() || "/");
     document.getElementById("filename").textContent = name;
     document.getElementById("compact-filename").textContent = name;
+    const compareURL = `/__serve_html__/compare.html?${new URLSearchParams({ url: currentURL.pathname + currentURL.search })}`;
+    compareLink.href = compactCompare.href = compareURL;
     const original = originalURL(currentURL);
     document.getElementById("standalone-link").href = original;
     document.getElementById("compact-standalone").href = original;

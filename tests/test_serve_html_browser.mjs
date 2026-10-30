@@ -118,6 +118,20 @@ before(async () => {
     await utimes(file, 1800000000 + index, 1800000000 + index);
   }
 
+  const compareDir = path.join(directory, "compare-fixture");
+  await mkdir(compareDir);
+  execFileSync("git", ["init", "-q", compareDir]);
+  const git = (...args) => execFileSync("git", ["-C", compareDir, ...args]);
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  await writeFile(path.join(compareDir, "history #?.md"), "# History\n\nThe old word remains.\n\nDeleted paragraph.\n");
+  await writeFile(path.join(compareDir, "style.css"), "body { color: rgb(10, 20, 30); }");
+  await writeFile(path.join(compareDir, "page.html"), '<link rel="stylesheet" href="style.css"><div>Old rendered text</div><script>document.body.dataset.ran = "yes"</script>');
+  git("add", "."); git("commit", "-qm", "first");
+  await writeFile(path.join(compareDir, "style.css"), "body { color: rgb(40, 50, 60); }");
+  await writeFile(path.join(compareDir, "page.html"), '<link rel="stylesheet" href="style.css"><div>New rendered text</div><script>document.body.dataset.ran = "yes"</script>');
+  await writeFile(path.join(compareDir, "history #?.md"), "# History\n\nThe new word remains.\n\nAdded paragraph.\n");
+  git("add", "."); git("commit", "-qm", "second");
   server = spawn(process.env.HTML_SERVE_TEST_PYTHON || "python3", ["-B",
     process.env.HTML_SERVE_TEST_SCRIPT || path.join(root, "src/html_serve/cli.py"),
     "--directory", directory, "--bind", "127.0.0.1"], {
@@ -1260,4 +1274,45 @@ test('HTML remains readable without JavaScript and directory API failures can be
     assert.equal(await page.locator('body').getAttribute('data-document-view'), 'banner');
     assert.equal(await page.locator('#content h1').innerText(), 'Plain document');
   } finally { await page.close(); }
+});
+
+
+test("compares rendered Git history and preserves the working tree", async () => {
+  const page = await browser.newPage();
+  const gitDir = path.join(directory, "compare-fixture");
+  const git = (...args) => execFileSync("git", ["-C", gitDir, ...args], { encoding: "utf8" });
+  const beforeStatus = git("status", "--porcelain");
+  await page.goto(baseURL + "compare-fixture/" + encodeURIComponent("history #?.md"));
+  await page.getByText("Compare with previous Git version", { exact: true }).first().click();
+  await page.waitForFunction(() => document.querySelector("#compare-status").textContent.includes("changes."));
+  const old = page.frameLocator("#compare-before");
+  const current = page.frameLocator("#compare-after");
+  assert.match(await old.locator("#content").innerText(), /old word/);
+  assert.match(await current.locator("#content").innerText(), /new word/);
+  assert.match(await page.locator("#compare-revision option:checked").innerText(), /[+-]\d\d:\d\d/);
+  assert.ok(await old.locator("body").evaluate(() => CSS.highlights.get("docserve-old").size > 0));
+  assert.ok(await current.locator("body").evaluate(() => CSS.highlights.get("docserve-new").size > 0));
+  await page.locator("#compare-next").click();
+  assert.match(await page.locator("#compare-status").innerText(), /Change 1 of/);
+  assert.equal(git("status", "--porcelain"), beforeStatus);
+  await page.close();
+});
+
+
+test("compares active HTML and commit-relative styles", async () => {
+  const page = await browser.newPage();
+  await page.goto(baseURL + "compare-fixture/page.html");
+  await page.getByText("Compare with previous Git version", { exact: true }).first().click();
+  await page.waitForFunction(() => document.querySelector("#compare-status").textContent.includes("changes."));
+  const old = page.frameLocator("#compare-before");
+  const current = page.frameLocator("#compare-after");
+  assert.equal(await old.locator("body").getAttribute("data-ran"), "yes");
+  assert.equal(await current.locator("body").getAttribute("data-ran"), "yes");
+  assert.equal(await old.locator("body").evaluate(el => getComputedStyle(el).color), "rgb(10, 20, 30)");
+  assert.equal(await current.locator("body").evaluate(el => getComputedStyle(el).color), "rgb(40, 50, 60)");
+  assert.ok(await old.locator("body").evaluate(() => CSS.highlights.get("docserve-old").size > 0));
+  await current.locator("div").evaluate(el => { el.textContent = "Dynamic update"; });
+  await page.waitForFunction(() => document.querySelector("#compare-status").textContent.includes("Refresh"));
+  assert.equal(await current.locator("body").evaluate(() => CSS.highlights.has("docserve-new")), false);
+  await page.close();
 });

@@ -274,6 +274,24 @@ also keeps document frames usable on plain HTTP networks. Ordinary HTML fetches
 and supporting frames still receive the original file. Without JavaScript,
 HTML remains visible with links to its directory and standalone page.
 
+### Compare Git versions
+
+Click **Compare with previous Git version** in the document controls to compare
+rendered content. The left pane shows a committed version and the right pane
+shows the working file. Choose another commit in **Previous version**. Use the
+change buttons to navigate, or turn off **Sync scrolling** to scroll each pane
+independently.
+
+When the working file differs from its latest commit, the comparison starts at
+that commit. Otherwise it starts at the preceding distinct committed version.
+The selector follows the first-parent Git history, including merge resolutions.
+The comparison does not change the repository. Relative
+assets in the historical document come from the selected commit. Root-relative
+and external assets can still refer to their original locations. HTML scripts
+run as they do in the normal viewer. If a script changes the document after the
+comparison, click **Refresh comparison** to update the marks. The comparison
+covers rendered content, not pixels, CSS, or canvas output.
+
 Markdown keeps its existing Raw and theme controls. When reached through an HTML
 document's frame, these remain inside the document, with navigation supplied by
 the surrounding viewer. Opening a Markdown document with
