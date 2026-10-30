@@ -1,5 +1,3 @@
-"""Read committed document history without changing a repository."""
-
 from dataclasses import asdict, dataclass
 import os
 from pathlib import Path, PurePosixPath
