@@ -44,6 +44,30 @@ def interface(name, address, **extra):
 
 
 class ServeHTML(unittest.TestCase):
+    def test_version_exits_before_resolving_paths_or_starting_a_server(self):
+        package = SimpleNamespace(version="1.2.3", read_text=lambda name: "2026-10-30T09:00:00Z\n")
+        output = io.StringIO()
+        with patch.object(helper, "distribution", return_value=package), \
+                patch.object(sys, "argv", ["docserve", "/missing/path", "--version"]), \
+                patch.object(helper, "serving_target") as target, \
+                patch.object(helper, "addresses_for_bind") as addresses, \
+                patch.object(helper, "create_server") as server, redirect_stdout(output):
+            with self.assertRaises(SystemExit) as exited:
+                helper.main()
+        self.assertEqual(exited.exception.code, 0)
+        self.assertEqual(output.getvalue(), "docserve 1.2.3 (built 2026-10-30T09:00:00Z)\n")
+        target.assert_not_called()
+        addresses.assert_not_called()
+        server.assert_not_called()
+
+    def test_version_handles_packages_without_build_metadata_and_uninstalled_source(self):
+        package = SimpleNamespace(version="0.1.0", read_text=lambda name: None)
+        with patch.object(helper, "distribution", return_value=package):
+            self.assertEqual(helper.version_string(), "docserve 0.1.0 (build time unavailable)")
+        with patch.object(helper, "distribution", side_effect=helper.PackageNotFoundError):
+            self.assertEqual(helper.version_string(),
+                             "docserve unknown (build time unavailable; uninstalled source)")
+
     def test_navigation_names_and_root_link(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

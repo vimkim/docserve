@@ -9,6 +9,7 @@ import errno
 from functools import partial
 from html import escape
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from importlib.metadata import PackageNotFoundError, distribution
 import ipaddress
 import io
 import json
@@ -763,8 +764,20 @@ def ipv4_address(value):
         raise argparse.ArgumentTypeError("--bind must be an IPv4 address") from error
 
 
+def version_string():
+    try:
+        package = distribution("docserve")
+    except PackageNotFoundError:
+        return "docserve unknown (build time unavailable; uninstalled source)"
+    built_at = package.read_text("build-time.txt")
+    build = f"built {built_at.strip()}" if built_at else "build time unavailable"
+    return f"docserve {package.version} ({build})"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", action="version", version=version_string(),
+                        help="show package version and UTC build time, then exit")
     parser.add_argument("path", nargs="?", metavar="PATH",
                         help="directory or file to link to (serves its Git root, "
                              "or containing directory outside Git); default: current directory")

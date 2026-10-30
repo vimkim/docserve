@@ -516,6 +516,19 @@ using per-diagram results.
 
 ## Server options
 
+`docserve --version` prints the installed package version and its UTC build
+timestamp, then exits without starting a server. The aliases `html-serve` and
+`md-serve` accept the same option. Example output:
+
+```text
+docserve 0.1.0 (built 2026-10-30T09:00:00Z)
+```
+
+The timestamp records when the wheel was built. Reinstalling that wheel keeps
+the same timestamp. An editable installation reports when its editable wheel
+was built; source edits do not update it. Older packages without a timestamp
+report `build time unavailable`.
+
 The `serve-html` agent skill can also suggest a command after creating an HTML
 file. Run that command yourself in an SSH terminal:
 
@@ -602,6 +615,8 @@ dependencies live in `src/html_serve/assets/` and ship in the Python package.
 `just assets` rebuilds the committed vendor files. Node/npm are only needed for
 development and browser tests. Python and browser checks run with `just test`
 and `just browser-test`; `just build` creates wheel and source distributions.
+The build backend adds the UTC build timestamp to wheel metadata. Set
+`SOURCE_DATE_EPOCH` to a Unix timestamp to use a fixed time for reproducible builds.
 `just checker-test` exercises the optional checker with real headless Chromium;
 install its browser explicitly with
 `uv run --extra check playwright install chromium --only-shell` first.

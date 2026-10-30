@@ -18,10 +18,11 @@ md-serve = "html_serve.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]
-build-backend = "uv_build"
+build-backend = "build_backend"
+backend-path = ["."]
 
 [tool.uv.build-backend]
 # Keep legacy imports and deployed asset symlinks working after the project rename.
 module-name = "html_serve"
-source-include = ["README.ko.md", "tests/**", "tools/**", "docs/**", "justfile", "AGENTS.md"]
+source-include = ["build_backend.py", "README.ko.md", "tests/**", "tools/**", "docs/**", "justfile", "AGENTS.md"]
 source-exclude = ["tools/serve-html-assets/node_modules/**"]
