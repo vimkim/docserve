@@ -26,10 +26,12 @@ if __package__:
     from .finder import Finder, FinderError
     from .history import VisitHistory
     from .paths import DocumentRoots, path_serving_target
+    from . import git_compare
 else:
     from finder import Finder, FinderError
     from history import VisitHistory
     from paths import DocumentRoots, path_serving_target
+    import git_compare
 
 
 VPN_PREFIXES = ("tailscale", "tun", "tap", "wg", "ppp", "vpn", "zt")
@@ -370,6 +372,8 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
 
     def document_response(self):
         request = urlsplit(self.path)
+        if request.path.startswith(PREVIEW_PREFIX + 'git/'):
+            return self.git_tree(request)
         if request.path.startswith(PREVIEW_PREFIX + 'api/'):
             return self.finder_api(request)
         if request.path.startswith(PREVIEW_PREFIX):
@@ -448,6 +452,27 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
             return self.preview_file(PREVIEW_ASSETS / "viewer.html", "text/html; charset=utf-8")
         return super().send_head()
 
+    def git_tree(self, request):
+        parts = request.path.removeprefix(PREVIEW_PREFIX + 'git/').split('/', 2)
+        if len(parts) != 3:
+            raise git_compare.GitError('Invalid historical URL.')
+        identity, commit, encoded = parts
+        root = self.roots.restore(identity)
+        relative = unquote(encoded, errors='surrogatepass')
+        object_id = git_compare.blob(root.directory, commit, relative)
+        if Path(relative).suffix.lower() in MARKDOWN_SUFFIXES and parse_qs(request.query).get('raw') != ['1']:
+            return self.preview_file(PREVIEW_ASSETS / 'viewer.html', 'text/html; charset=utf-8')
+        data = git_compare.git(root.directory, 'cat-file', 'blob', object_id)
+        self.send_response(200)
+        content_type = ('text/plain; charset=utf-8' if Path(relative).suffix.lower() in MARKDOWN_SUFFIXES
+                        else self.guess_type(relative))
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+        return io.BytesIO(data)
+
     def navigation_path(self, url):
         _, path, relative = self.roots.navigation(url)
         return path, relative
@@ -514,7 +539,10 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
             return values[0]
         try:
             endpoint = request.path.removeprefix(PREVIEW_PREFIX + 'api/')
-            if endpoint == 'search':
+            if endpoint == 'git-history':
+                _, path, _ = self.roots.navigation(value('url'))
+                result = git_compare.history(path, value('url'), self.roots).json()
+            elif endpoint == 'search':
                 root, _, scope = self.roots.navigation(value('scope_url', '/'))
                 if 'scope' in query:
                     scope = value('scope')
