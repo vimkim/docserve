@@ -522,6 +522,114 @@ class ServeHTML(unittest.TestCase):
                         server.shutdown()
                         thread.join(timeout=5)
 
+    def test_disconnected_body_is_quiet_and_server_handles_next_request(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "sample.txt").write_bytes(b"response body\n")
+            started = threading.Event()
+            closed = threading.Event()
+
+            class PausedHandler(helper.PreviewHTTPRequestHandler):
+                def copyfile(self, source, outputfile):
+                    started.set()
+                    if not closed.wait(5):
+                        raise TimeoutError("client did not close")
+                    super().copyfile(source, outputfile)
+
+            logs = io.StringIO()
+            handler = partial(PausedHandler, directory=temp, verbose=True)
+            with redirect_stderr(logs), helper.ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+                sender, receiver = socket.socketpair()
+                receiver.settimeout(5)
+                worker = threading.Thread(target=server.process_request_thread,
+                                          args=(sender, ("local-test", 0)), daemon=True)
+                worker.start()
+                try:
+                    receiver.sendall(b"GET /sample.txt HTTP/1.0\r\n\r\n")
+                    self.assertTrue(started.wait(5), "body transfer did not start")
+                    receiver.shutdown(socket.SHUT_RDWR)
+                finally:
+                    receiver.close()
+                    closed.set()
+                    worker.join(5)
+                self.assertFalse(worker.is_alive())
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    client = build_opener(ProxyHandler({}))
+                    with client.open(f"http://127.0.0.1:{server.server_port}/sample.txt", timeout=5) as response:
+                        self.assertEqual(response.status, 200)
+                        self.assertEqual(response.read(), b"response body\n")
+                finally:
+                    server.shutdown()
+                    thread.join(5)
+                self.assertFalse(thread.is_alive())
+            self.assertIn('"GET /sample.txt HTTP/1.0" 200', logs.getvalue())
+            self.assertNotIn("Traceback", logs.getvalue())
+
+    def test_header_disconnects_do_not_send_replacement_responses(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "sample.txt").write_bytes(b"response body\n")
+            for method in ("GET", "HEAD", "POST"):
+                for error in (BrokenPipeError, ConnectionResetError):
+                    with self.subTest(method=method, error=error.__name__):
+                        class FaultHandler(helper.PreviewHTTPRequestHandler):
+                            def end_headers(self):
+                                if not getattr(self, "faulted", False):
+                                    self.faulted = True
+                                    raise error("disconnected")
+                                super().end_headers()
+
+                        logs = io.StringIO()
+                        handler = partial(FaultHandler, directory=temp, verbose=True)
+                        with redirect_stderr(logs), helper.ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+                            sender, receiver = socket.socketpair()
+                            receiver.settimeout(5)
+                            worker = threading.Thread(target=server.process_request_thread,
+                                                      args=(sender, ("local-test", 0)), daemon=True)
+                            worker.start()
+                            try:
+                                body = b'{"url":"/sample.txt"}' if method == "POST" else b""
+                                path = "/__serve_html__/api/visit" if body else "/sample.txt"
+                                request = (f"{method} {path} HTTP/1.0\r\nContent-Type: application/json\r\n"
+                                           f"Content-Length: {len(body)}\r\n\r\n").encode() + body
+                                receiver.sendall(request)
+                                response = bytearray()
+                                while chunk := receiver.recv(8192):
+                                    response.extend(chunk)
+                            finally:
+                                receiver.close()
+                                worker.join(5)
+                            self.assertFalse(worker.is_alive())
+                        self.assertEqual(response, b"")
+                        self.assertIn(f'"{method} {path} HTTP/1.0" 200', logs.getvalue())
+                        self.assertNotIn("Traceback", logs.getvalue())
+
+    def test_unexpected_body_error_remains_diagnostic(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "sample.txt").write_bytes(b"response body\n")
+
+            class FaultHandler(helper.PreviewHTTPRequestHandler):
+                def copyfile(self, source, outputfile):
+                    raise OSError("unexpected body failure")
+
+            logs = io.StringIO()
+            handler = partial(FaultHandler, directory=temp)
+            with redirect_stderr(logs), helper.ThreadingHTTPServer(("127.0.0.1", 0), handler) as server:
+                sender, receiver = socket.socketpair()
+                receiver.settimeout(5)
+                worker = threading.Thread(target=server.process_request_thread,
+                                          args=(sender, ("local-test", 0)), daemon=True)
+                worker.start()
+                try:
+                    receiver.sendall(b"GET /sample.txt HTTP/1.0\r\n\r\n")
+                    while receiver.recv(8192):
+                        pass
+                finally:
+                    receiver.close()
+                    worker.join(5)
+                self.assertFalse(worker.is_alive())
+            self.assertIn("OSError: unexpected body failure", logs.getvalue())
+
     def test_directories_list_index_pages_until_explicitly_requested(self):
         with tempfile.TemporaryDirectory(prefix="serve-html-test-") as temp:
             directory = Path(temp)
