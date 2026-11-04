@@ -296,6 +296,12 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
             return str(self.roots.navigation(path)[1])
         return super().translate_path(path)
 
+    def guess_type(self, path):
+        content_type = super().guess_type(path)
+        if content_type == 'text/plain':
+            return 'text/plain; charset=utf-8'
+        return content_type
+
     def list_directory(self, path):
         diagnostic = (lambda message: self.log_message("%s", message)) if self.verbose else None
         try:

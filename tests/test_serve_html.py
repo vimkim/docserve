@@ -760,6 +760,24 @@ class ServeHTML(unittest.TestCase):
                         with client.open(urls[-1].replace("page.html", "style.css"), timeout=2) as response:
                             self.assertEqual(response.read(), b"adjacent asset")
 
+    def test_plain_text_responses_declare_utf8_for_get_and_head(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            content = '요청하신 동시 INSERT 시나리오입니다.\n'.encode('utf-8')
+            for name in ('reply.txt', 'REPLY.TXT', 'reply.log'):
+                (directory / name).write_bytes(content)
+            client = build_opener(ProxyHandler({}))
+            with self.server(directory, '--bind', '127.0.0.1') as (_, urls, _):
+                for name in ('reply.txt', 'REPLY.TXT', 'reply.log'):
+                    for method in ('GET', 'HEAD'):
+                        with self.subTest(name=name, method=method), client.open(
+                            Request(urls[0] + name, method=method)
+                        ) as response:
+                            self.assertEqual(response.headers.get_content_type(), 'text/plain')
+                            self.assertEqual(response.headers.get_content_charset(), 'utf-8')
+                            self.assertEqual(int(response.headers['Content-Length']), len(content))
+                            self.assertEqual(response.read(), content if method == 'GET' else b'')
+
     @unittest.skipUnless(shutil.which("git"), "Git is unavailable")
     def test_positional_file_serves_git_root_from_another_directory(self):
         with tempfile.TemporaryDirectory(prefix="serve-html-git-test-") as temp:

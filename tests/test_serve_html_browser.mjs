@@ -111,6 +111,8 @@ before(async () => {
     "```mermaid", "flowchart LR", "A --> B", "```", "", "Final paragraph.",
   ].join("\n"));
   await writeFile(path.join(directory, "plain.md"), "# Plain document\n\nNo diagrams or equations.\n");
+  await writeFile(path.join(directory, "reply.TXT"), "요청하신 동시 INSERT 시나리오입니다.\n");
+  await writeFile(path.join(extraDirectory, "reply.txt"), "요청하신 동시 INSERT 시나리오입니다.\n");
   await mkdir(path.join(extraDirectory, 'docs'), { recursive: true });
   const absoluteMarkdown = path.join(extraDirectory, 'docs/한글 #?.md');
   const absoluteHTML = path.join(extraDirectory, 'docs/page.html');
@@ -269,6 +271,19 @@ test("directories show listings until an index page is clicked", async () => {
     await page.waitForLoadState('domcontentloaded');
     assert.equal(await page.title(), "Selected nested index");
     assert.equal(await page.frameLocator('#document-frame').locator("h1").innerText(), "Nested index page");
+  } finally {
+    await page.close();
+  }
+});
+
+test('plain text displays Korean as UTF-8 through direct and absolute filesystem URLs', async () => {
+  const page = await browser.newPage();
+  try {
+    for (const url of ['reply.TXT', encodeURI(path.join(extraDirectory, 'reply.txt'))]) {
+      await page.goto(new URL(url, baseURL).href);
+      assert.equal(await page.locator('body').innerText(), '요청하신 동시 INSERT 시나리오입니다.\n');
+      assert.equal(await page.evaluate(() => document.characterSet), 'UTF-8');
+    }
   } finally {
     await page.close();
   }

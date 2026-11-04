@@ -65,13 +65,16 @@ class AbsoluteLinkTests(unittest.TestCase):
             root.mkdir()
             extra.mkdir()
             (extra / 'page.html').write_text('<h1>External HTML</h1>')
-            (extra / 'data.txt').write_text('External data')
+            text = '외부 한글 문서입니다.\n'.encode('utf-8')
+            (extra / 'data.txt').write_bytes(text)
             client = build_opener(ProxyHandler({}))
             with self.server(root, '--bind', '127.0.0.1') as (_, urls, _):
                 base = urls[0].rstrip('/')
                 for path, expected in ((extra / 'page.html', b'<h1>External HTML</h1>'),
-                                       (extra / 'data.txt', b'External data')):
+                                       (extra / 'data.txt', text)):
                     with client.open(base + str(path)) as response:
+                        if path.suffix == '.txt':
+                            self.assertEqual(response.headers.get_content_charset(), 'utf-8')
                         self.assertEqual(response.read(), expected)
                 with client.open(base + str(extra)) as response:
                     self.assertTrue(response.url.endswith('/'))
