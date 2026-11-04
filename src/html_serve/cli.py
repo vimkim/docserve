@@ -274,6 +274,12 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         kwargs['directory'] = str(self.roots.primary.directory)
         super().__init__(*args, **kwargs)
 
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def send_response(self, code, message=None):
         self.response_status = code
         super().send_response(code, message)
@@ -367,6 +373,8 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
         self.html_response = False
         try:
             return self.document_response()
+        except (BrokenPipeError, ConnectionResetError):
+            raise
         except (ValueError, OSError, RuntimeError) as error:
             self.send_error(getattr(error, 'status', 400), 'Cannot serve this path', explain=str(error))
             return None
@@ -527,6 +535,8 @@ class PreviewHTTPRequestHandler(SimpleHTTPRequestHandler):
                 raise FinderError('Visited path was not found.', 404)
             root.history.record(relative, 'directory' if path.is_dir() else 'file')
             stream = self.json_response({'recorded': True})
+        except (BrokenPipeError, ConnectionResetError):
+            raise
         except (ValueError, OSError) as error:
             stream = self.json_response({'error': str(error)}, getattr(error, 'status', 400))
         self.wfile.write(stream.getvalue())
